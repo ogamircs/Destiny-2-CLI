@@ -3,6 +3,7 @@ export const AUTH_URL = "https://www.bungie.net/en/OAuth/Authorize";
 export const TOKEN_URL = "https://www.bungie.net/Platform/App/OAuth/Token/";
 export const OAUTH_CALLBACK_PORT = 3847;
 export const OAUTH_CALLBACK_PATH = "/callback";
+export const OAUTH_CALLBACK_URL = `https://localhost:${OAUTH_CALLBACK_PORT}/callback`;
 
 // Bungie API rate limit
 export const RATE_LIMIT_PER_SECOND = 25;

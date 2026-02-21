@@ -137,19 +137,30 @@ export function registerStatsCommand(program: Command) {
           return;
         }
 
-        // Merged stats
-        const modeKey =
-          modes.length > 0
-            ? Object.keys(
-                accountStats.mergedAllCharacters?.results || {}
-              )[0] || ""
-            : Object.keys(
-                accountStats.mergedAllCharacters?.results || {}
-              )[0] || "";
+        // Map mode name → API result key
+        const MODE_RESULT_KEY: Record<string, string> = {
+          pvp: "allPvP",
+          pve: "allPvE",
+          raid: "raid",
+          strikes: "allStrikes",
+          gambit: "allPvECompetitive",
+          trials: "trialsOfOsiris",
+          ironbanner: "ironBanner",
+          dungeon: "dungeon",
+          nightfall: "scored_nightfall",
+          all: "allTime",
+        };
+
+        const results = accountStats.mergedAllCharacters?.results || {};
+        const requestedKey = MODE_RESULT_KEY[opts.mode?.toLowerCase() || "all"];
+
+        // Try the exact key first, then fall back to first available key
+        const modeKey = requestedKey && results[requestedKey]
+          ? requestedKey
+          : Object.keys(results)[0] || "";
 
         if (modeKey) {
-          const modeData =
-            accountStats.mergedAllCharacters.results[modeKey];
+          const modeData = results[modeKey];
           const stats = extractStats(modeData?.allTime);
           const modeName = opts.mode === "all" ? "All Activities" : opts.mode.toUpperCase();
           renderStatsTable(stats, `Account Stats — ${modeName}`);
@@ -172,10 +183,13 @@ export function registerStatsCommand(program: Command) {
               continue;
             }
 
-            const charModeKey = Object.keys(charStats.results || {})[0];
+            const charResults = charStats.results || {};
+            const charModeKey = requestedKey && charResults[requestedKey]
+              ? requestedKey
+              : Object.keys(charResults)[0];
             if (!charModeKey) continue;
 
-            const modeData = charStats.results[charModeKey];
+            const modeData = charResults[charModeKey];
             const stats = extractStats(modeData?.allTime);
             if (stats.length > 0) {
               renderStatsTable(stats, `${charName} (${char.light})`);
