@@ -190,6 +190,16 @@ This compiles to a self-contained `./destiny` binary targeting `bun-darwin-arm64
 bun run scripts/build.ts && sudo mv destiny /usr/local/bin/destiny
 ```
 
+## Testing
+
+```bash
+# Run all unit tests
+bun test
+
+# Watch mode for local iteration
+bun test --watch
+```
+
 ## Project Structure
 
 ```
