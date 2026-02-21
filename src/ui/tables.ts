@@ -1,13 +1,12 @@
 import Table from "cli-table3";
 import chalk from "chalk";
-import { colorByTier, lightLevel, className, raceName, genderName, timeSince, header, kd, pct } from "./format.ts";
+import { colorByTier, className, raceName, genderName, timeSince, header, kd, pct } from "./format.ts";
 import type { CharacterData } from "../api/profile.ts";
 import { BUCKET_SLOT_NAMES } from "../utils/constants.ts";
 
 export interface DisplayItem {
   name: string;
   tier: string;
-  light: number;
   slot: string;
   instanceId?: string;
   hash: number;
@@ -16,12 +15,12 @@ export interface DisplayItem {
   location: string; // character name or "Vault"
 }
 
-export function renderCharacterTable(characters: CharacterData[]) {
+export function renderCharacterTable(characters: CharacterData[], guardianRank?: number) {
   const table = new Table({
     head: [
       chalk.bold("Class"),
       chalk.bold("Race/Gender"),
-      chalk.bold("Light"),
+      chalk.bold("Rank"),
       chalk.bold("Last Played"),
       chalk.bold("Time Played"),
     ],
@@ -32,7 +31,7 @@ export function renderCharacterTable(characters: CharacterData[]) {
     table.push([
       chalk.bold(className(char.classType)),
       `${raceName(char.raceType)} ${genderName(char.genderType)}`,
-      lightLevel(char.light),
+      guardianRank !== undefined ? chalk.cyan(`Rank ${guardianRank}`) : chalk.dim("—"),
       timeSince(char.dateLastPlayed),
       `${Math.floor(parseInt(char.minutesPlayedTotal) / 60)}h`,
     ]);
@@ -62,19 +61,17 @@ export function renderInventoryTable(
     const table = new Table({
       head: [
         chalk.bold(slot),
-        chalk.bold("Light"),
         chalk.bold("Tier"),
         chalk.bold("Qty"),
       ],
       style: { head: [], border: ["dim"] },
-      colWidths: [40, 8, 12, 6],
+      colWidths: [44, 12, 6],
     });
 
     for (const item of slotItems) {
       const prefix = item.isEquipped ? chalk.green("● ") : "  ";
       table.push([
         prefix + colorByTier(item.name, item.tier),
-        item.light > 0 ? lightLevel(item.light) : "",
         item.tier,
         item.quantity > 1 ? String(item.quantity) : "",
       ]);

@@ -192,7 +192,7 @@ export function registerStatsCommand(program: Command) {
             const modeData = charResults[charModeKey];
             const stats = extractStats(modeData?.allTime);
             if (stats.length > 0) {
-              renderStatsTable(stats, `${charName} (${char.light})`);
+              renderStatsTable(stats, charName);
             }
           }
         }

@@ -14,7 +14,7 @@ export function registerCharactersCommand(program: Command) {
     .action(async () => {
       try {
         const profile = await withSpinner("Fetching characters...", () =>
-          getProfile([DestinyComponentType.Characters])
+          getProfile([DestinyComponentType.Profiles, DestinyComponentType.Characters])
         );
 
         if (!profile.characters?.data) {
@@ -33,7 +33,8 @@ export function registerCharactersCommand(program: Command) {
             new Date(a.dateLastPlayed).getTime()
         );
 
-        renderCharacterTable(characters);
+        const guardianRank = profile.profile?.data.currentGuardianRank;
+        renderCharacterTable(characters, guardianRank);
       } catch (err) {
         console.error(error(formatError(err)));
         process.exit(1);

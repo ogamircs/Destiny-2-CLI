@@ -14,6 +14,9 @@ export interface ProfileResponse {
         bungieGlobalDisplayNameCode?: number;
       };
       dateLastPlayed: string;
+      currentGuardianRank: number;
+      lifetimeHighestGuardianRank: number;
+      currentSeasonRewardPowerCap: number;
     };
   };
   characters?: {

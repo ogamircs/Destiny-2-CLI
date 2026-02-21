@@ -44,7 +44,6 @@ function findEquippableItems(
         results.push({
           name: def.name,
           tier: def.tierTypeName,
-          light: instance?.primaryStat?.value || 0,
           slot: "",
           instanceId: item.itemInstanceId,
           hash: item.itemHash,
@@ -72,7 +71,6 @@ function findEquippableItems(
     results.push({
       name: def.name,
       tier: def.tierTypeName,
-      light: instance?.primaryStat?.value || 0,
       slot: "",
       instanceId: item.itemInstanceId,
       hash: item.itemHash,

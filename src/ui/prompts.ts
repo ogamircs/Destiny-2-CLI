@@ -10,7 +10,7 @@ export async function pickCharacter(
   const result = await p.select({
     message,
     options: characters.map((c) => ({
-      label: `${className(c.classType)} (${c.light})`,
+      label: className(c.classType),
       value: c.characterId,
     })),
   });

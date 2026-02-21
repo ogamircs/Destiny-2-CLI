@@ -31,7 +31,6 @@ function resolveItems(
     result.push({
       name: def.name,
       tier: def.tierTypeName,
-      light: instance?.primaryStat?.value || 0,
       slot: slotName,
       instanceId: item.itemInstanceId,
       hash: item.itemHash,
