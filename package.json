@@ -12,7 +12,8 @@
     "build": "bun run scripts/build.ts",
     "dev": "bun run --watch src/index.ts",
     "test": "bun test",
-    "test:watch": "bun test --watch"
+    "test:watch": "bun test --watch",
+    "test:p1": "for f in src/services/search.test.ts src/services/wishlist.test.ts src/services/local-db.test.ts src/commands/tag.test.ts src/commands/search.test.ts src/commands/farming.test.ts src/commands/rolls.test.ts; do bun test \"$f\" || exit 1; done"
   },
   "devDependencies": {
     "@types/bun": "latest"
