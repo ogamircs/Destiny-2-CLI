@@ -335,6 +335,68 @@ function getPlugPerkHashes(plugItemHash: number): number[] {
   return perkHashes;
 }
 
+function matchesPerkGroupsAcrossDistinctSockets(
+  perkGroups: number[][],
+  socketPerkColumns: Set<number>[]
+): boolean {
+  if (perkGroups.length > socketPerkColumns.length) {
+    return false;
+  }
+
+  const matchingColumnsByGroup = perkGroups.map((group) => {
+    if (group.length === 0) {
+      return [];
+    }
+
+    const matches: number[] = [];
+    for (let socketIndex = 0; socketIndex < socketPerkColumns.length; socketIndex++) {
+      const column = socketPerkColumns[socketIndex]!;
+      if (group.some((hash) => column.has(hash))) {
+        matches.push(socketIndex);
+      }
+    }
+    return matches;
+  });
+
+  if (matchingColumnsByGroup.some((matches) => matches.length === 0)) {
+    return false;
+  }
+
+  // Assign the most-constrained groups first to avoid unnecessary branching.
+  const groupOrder = matchingColumnsByGroup
+    .map((_, index) => index)
+    .sort(
+      (a, b) =>
+        matchingColumnsByGroup[a]!.length - matchingColumnsByGroup[b]!.length
+    );
+
+  const usedSockets = new Set<number>();
+
+  function assignGroup(groupOrderIndex: number): boolean {
+    if (groupOrderIndex >= groupOrder.length) {
+      return true;
+    }
+
+    const groupIndex = groupOrder[groupOrderIndex]!;
+    const matchingSockets = matchingColumnsByGroup[groupIndex]!;
+
+    for (const socketIndex of matchingSockets) {
+      if (usedSockets.has(socketIndex)) {
+        continue;
+      }
+      usedSockets.add(socketIndex);
+      if (assignGroup(groupOrderIndex + 1)) {
+        return true;
+      }
+      usedSockets.delete(socketIndex);
+    }
+
+    return false;
+  }
+
+  return assignGroup(0);
+}
+
 export function findWeaponsByPerkGroups(
   perkGroups: number[][],
   archetypeQuery?: string
@@ -370,7 +432,10 @@ export function findWeaponsByPerkGroups(
     if (socketEntries.length === 0) continue;
 
     const weaponPerks = new Set<number>();
+    const socketPerkColumns: Set<number>[] = [];
+
     for (const socketEntry of socketEntries) {
+      const socketPerks = new Set<number>();
       const plugSetHashes = [
         socketEntry.randomizedPlugSetHash,
         socketEntry.reusablePlugSetHash,
@@ -382,17 +447,20 @@ export function findWeaponsByPerkGroups(
         for (const plugItemHash of plugItemHashes) {
           for (const perkHash of getPlugPerkHashes(plugItemHash)) {
             weaponPerks.add(perkHash);
+            socketPerks.add(perkHash);
           }
         }
       }
+
+      if (socketPerks.size > 0) {
+        socketPerkColumns.push(socketPerks);
+      }
     }
 
-    if (weaponPerks.size === 0) continue;
-
-    const matchesAllGroups = perkGroups.every((group) =>
-      group.some((hash) => weaponPerks.has(hash))
-    );
-    if (!matchesAllGroups) continue;
+    if (weaponPerks.size === 0 || socketPerkColumns.length === 0) continue;
+    if (!matchesPerkGroupsAcrossDistinctSockets(perkGroups, socketPerkColumns)) {
+      continue;
+    }
 
     results.push({
       hash: data.hash,

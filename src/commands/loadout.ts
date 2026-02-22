@@ -5,7 +5,11 @@ import Table from "cli-table3";
 import { getProfile, type CharacterData } from "../api/profile.ts";
 import { equipItem } from "../api/inventory.ts";
 import { ensureManifest } from "../services/manifest-cache.ts";
-import { buildInventoryIndex, getRequiredComponents } from "../services/item-index.ts";
+import {
+  buildInventoryIndex,
+  getRequiredComponents,
+  type IndexedItem,
+} from "../services/item-index.ts";
 import {
   saveLoadout,
   getLoadout,
@@ -20,6 +24,39 @@ import { withSpinner, createSpinner } from "../ui/spinner.ts";
 import { formatError } from "../utils/errors.ts";
 
 const FARMING_PREFIX = "__farming__:";
+
+function loadoutApplyCandidateScore(
+  item: IndexedItem,
+  targetCharacterId: string
+): number {
+  let score = 0;
+
+  if (item.location === targetCharacterId) {
+    score += 100;
+  } else if (item.location === "vault") {
+    score += 50;
+  } else {
+    score += 30;
+  }
+
+  if (item.transferStatus === 0 && !item.nonTransferrable) {
+    score += 25;
+  }
+  if (!item.nonTransferrable) {
+    score += 15;
+  }
+  if (!item.isLocked) {
+    score += 10;
+  }
+  if (!item.isEquipped) {
+    score += 5;
+  }
+  if (item.instanceId) {
+    score += 2;
+  }
+
+  return score;
+}
 
 // ---------------------------------------------------------------------------
 // Character resolution helpers
@@ -209,57 +246,83 @@ export function registerLoadoutCommand(program: Command) {
 
         for (const loadoutItem of saved.items) {
           try {
-            // Find item: instanceId first, then hash fallback
-            let item = loadoutItem.instanceId
-              ? index.byInstanceId.get(loadoutItem.instanceId)
-              : undefined;
+            const candidatesToTry: IndexedItem[] = [];
+            const seenCandidates = new Set<string>();
+            const pushCandidate = (candidate: IndexedItem | undefined) => {
+              if (!candidate) return;
+              const key = `${candidate.instanceId ?? `hash:${candidate.hash}`}:${candidate.location}`;
+              if (seenCandidates.has(key)) return;
+              seenCandidates.add(key);
+              candidatesToTry.push(candidate);
+            };
 
-            if (!item) {
-              // Fallback by hash: prefer target character, then vault, then any
-              const candidates = index.byHash.get(loadoutItem.hash) ?? [];
-              item =
-                candidates.find((i) => i.location === char.characterId) ??
-                candidates.find((i) => i.location === "vault") ??
-                candidates[0];
+            // Try exact instance first when present, then hash fallback candidates ranked
+            // by likely transfer/equip success.
+            if (loadoutItem.instanceId) {
+              pushCandidate(index.byInstanceId.get(loadoutItem.instanceId));
             }
 
-            if (!item) {
-              skipped++;
-              continue;
-            }
-
-            const instanceId = item.instanceId ?? "0";
-
-            if (item.location === char.characterId && item.isEquipped) {
-              // Already equipped on target — nothing to do
-              equipped++;
-              spinner.text = `Applying loadout (${equipped}/${total})...`;
-              continue;
-            }
-
-            if (item.location === char.characterId && !item.isEquipped) {
-              // Already on character, just equip
-              await equipItem(instanceId, char.characterId);
-              equipped++;
-              spinner.text = `Applying loadout (${equipped}/${total})...`;
-              continue;
-            }
-
-            // Need to transfer first
-            const plan = planMove(
-              item,
-              { type: "character", characterId: char.characterId },
-              index
+            const hashCandidates = [...(index.byHash.get(loadoutItem.hash) ?? [])].sort(
+              (a, b) =>
+                loadoutApplyCandidateScore(b, char.characterId) -
+                loadoutApplyCandidateScore(a, char.characterId)
             );
-            if (!plan.isValid) {
+            for (const candidate of hashCandidates) {
+              pushCandidate(candidate);
+            }
+
+            if (candidatesToTry.length === 0) {
               skipped++;
               continue;
             }
 
-            await executePlan(plan);
-            await equipItem(instanceId, char.characterId);
-            equipped++;
-            spinner.text = `Applying loadout (${equipped}/${total})...`;
+            let applied = false;
+
+            for (const item of candidatesToTry) {
+              try {
+                const instanceId = item.instanceId ?? "0";
+
+                if (item.location === char.characterId && item.isEquipped) {
+                  // Already equipped on target — nothing to do
+                  equipped++;
+                  spinner.text = `Applying loadout (${equipped}/${total})...`;
+                  applied = true;
+                  break;
+                }
+
+                if (item.location === char.characterId && !item.isEquipped) {
+                  // Already on character, just equip
+                  await equipItem(instanceId, char.characterId);
+                  equipped++;
+                  spinner.text = `Applying loadout (${equipped}/${total})...`;
+                  applied = true;
+                  break;
+                }
+
+                // Need to transfer first
+                const plan = planMove(
+                  item,
+                  { type: "character", characterId: char.characterId },
+                  index
+                );
+                if (!plan.isValid) {
+                  continue;
+                }
+
+                await executePlan(plan);
+                await equipItem(instanceId, char.characterId);
+                equipped++;
+                spinner.text = `Applying loadout (${equipped}/${total})...`;
+                applied = true;
+                break;
+              } catch {
+                continue;
+              }
+            }
+
+            if (!applied) {
+              skipped++;
+            }
           } catch {
             skipped++;
           }

@@ -855,6 +855,76 @@ describe("loadout apply", () => {
     expect(equipItemMock).toHaveBeenCalledWith("inst-shared-char", CHAR_WARLOCK.characterId);
   });
 
+  test("hash fallback prefers transferrable candidates before blocked candidates", async () => {
+    const sharedHash = 50102;
+    const blockedVaultCandidate = {
+      ...ITEM_VAULT,
+      hash: sharedHash,
+      instanceId: "inst-blocked",
+      location: "vault",
+      transferStatus: 2,
+      nonTransferrable: true,
+      isLocked: true,
+      isEquipped: false,
+    };
+    const transferrableVaultCandidate = {
+      ...ITEM_VAULT,
+      hash: sharedHash,
+      instanceId: "inst-good",
+      location: "vault",
+      transferStatus: 0,
+      nonTransferrable: false,
+      isLocked: false,
+      isEquipped: false,
+    };
+
+    const index = {
+      all: [blockedVaultCandidate, transferrableVaultCandidate],
+      byInstanceId: new Map([
+        [blockedVaultCandidate.instanceId, blockedVaultCandidate],
+        [transferrableVaultCandidate.instanceId, transferrableVaultCandidate],
+      ]),
+      // Blocked candidate is first to prove ordering is not based on raw array order.
+      byHash: new Map([[sharedHash, [blockedVaultCandidate, transferrableVaultCandidate]]]),
+      byCharacter: new Map([[CHAR_WARLOCK.characterId, []]]),
+      vaultItems: [blockedVaultCandidate, transferrableVaultCandidate],
+    };
+    const loadout = {
+      name: "Transfer Preference Build",
+      classType: 2,
+      items: [
+        { hash: sharedHash, instanceId: "missing-instance", bucketHash: blockedVaultCandidate.bucketHash, isEquipped: true },
+      ],
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+
+    const planMoveMock = mock((item: any) => ({
+      isValid: true,
+      steps: [{ itemInstanceId: item.instanceId }],
+      errors: [],
+    }));
+    const executePlanMock = mock(async () => {});
+    const equipItemMock = mock(async () => {});
+
+    setupApplyMocks({ loadout, index, planMoveMock, executePlanMock, equipItemMock });
+
+    const { registerLoadoutCommand } = await import(
+      `./loadout.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerLoadoutCommand, [
+      "loadout", "apply", "Transfer Preference Build", "--character", "warlock",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(planMoveMock).toHaveBeenCalledTimes(1);
+    expect((planMoveMock.mock.calls[0]?.[0] as any)?.instanceId).toBe("inst-good");
+    expect(executePlanMock).toHaveBeenCalledTimes(1);
+    expect(equipItemMock).toHaveBeenCalledWith("inst-good", CHAR_WARLOCK.characterId);
+    expect(result.logs.join("\n")).toMatch(/1 item\(s\) equipped, 0 skipped/);
+  });
+
   test("invalid move plan → item skipped without execute/equip", async () => {
     const loadout = {
       name: "Invalid Plan Build",

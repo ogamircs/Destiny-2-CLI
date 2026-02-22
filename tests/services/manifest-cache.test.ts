@@ -208,7 +208,10 @@ describe("services/manifest-cache lookup helpers", () => {
           displayProperties: { name: "Palindrome", icon: "" },
           inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
           sockets: {
-            socketEntries: [{ randomizedPlugSetHash: 500 }],
+            socketEntries: [
+              { randomizedPlugSetHash: 500 },
+              { randomizedPlugSetHash: 502 },
+            ],
           },
         }),
       },
@@ -256,10 +259,14 @@ describe("services/manifest-cache lookup helpers", () => {
         id: 500,
         json: JSON.stringify({
           hash: 500,
-          reusablePlugItems: [
-            { plugItemHash: 10001 },
-            { plugItemHash: 10002 },
-          ],
+          reusablePlugItems: [{ plugItemHash: 10001 }],
+        }),
+      },
+      {
+        id: 502,
+        json: JSON.stringify({
+          hash: 502,
+          reusablePlugItems: [{ plugItemHash: 10002 }],
         }),
       },
       {
@@ -289,7 +296,10 @@ describe("services/manifest-cache lookup helpers", () => {
           displayProperties: { name: "Prosecutor", icon: "" },
           inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
           sockets: {
-            socketEntries: [{ randomizedPlugSetHash: 600 }],
+            socketEntries: [
+              { randomizedPlugSetHash: 600 },
+              { randomizedPlugSetHash: 602 },
+            ],
           },
         }),
       },
@@ -337,10 +347,14 @@ describe("services/manifest-cache lookup helpers", () => {
         id: 600,
         json: JSON.stringify({
           hash: 600,
-          reusablePlugItems: [
-            { plugItemHash: 20001 },
-            { plugItemHash: 20002 },
-          ],
+          reusablePlugItems: [{ plugItemHash: 20001 }],
+        }),
+      },
+      {
+        id: 602,
+        json: JSON.stringify({
+          hash: 602,
+          reusablePlugItems: [{ plugItemHash: 20002 }],
         }),
       },
       {
@@ -420,6 +434,87 @@ describe("services/manifest-cache lookup helpers", () => {
     expect(filteredResults).toHaveLength(1);
     expect(filteredResults[0]?.name).toBe("Palindrome");
     expect(filteredResults[0]?.archetype).toBe("Hand Cannon");
+  });
+
+  test("findWeaponsByPerkGroups requires requested perk groups across distinct sockets", () => {
+    itemRows.push(
+      {
+        id: 400,
+        json: JSON.stringify({
+          hash: 400,
+          itemType: 3,
+          itemTypeDisplayName: "Hand Cannon",
+          displayProperties: { name: "Single Column Gun", icon: "" },
+          inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
+          sockets: {
+            socketEntries: [{ randomizedPlugSetHash: 800 }],
+          },
+        }),
+      },
+      {
+        id: 401,
+        json: JSON.stringify({
+          hash: 401,
+          itemType: 3,
+          itemTypeDisplayName: "Hand Cannon",
+          displayProperties: { name: "Split Column Gun", icon: "" },
+          inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
+          sockets: {
+            socketEntries: [
+              { randomizedPlugSetHash: 801 },
+              { randomizedPlugSetHash: 802 },
+            ],
+          },
+        }),
+      },
+      {
+        id: 40001,
+        json: JSON.stringify({
+          hash: 40001,
+          displayProperties: { name: "Perk A", icon: "" },
+          perks: [{ perkHash: 9401 }],
+        }),
+      },
+      {
+        id: 40002,
+        json: JSON.stringify({
+          hash: 40002,
+          displayProperties: { name: "Perk B", icon: "" },
+          perks: [{ perkHash: 9402 }],
+        }),
+      }
+    );
+
+    plugSetRows.push(
+      {
+        id: 800,
+        json: JSON.stringify({
+          hash: 800,
+          reusablePlugItems: [
+            { plugItemHash: 40001 },
+            { plugItemHash: 40002 },
+          ],
+        }),
+      },
+      {
+        id: 801,
+        json: JSON.stringify({
+          hash: 801,
+          reusablePlugItems: [{ plugItemHash: 40001 }],
+        }),
+      },
+      {
+        id: 802,
+        json: JSON.stringify({
+          hash: 802,
+          reusablePlugItems: [{ plugItemHash: 40002 }],
+        }),
+      }
+    );
+
+    const results = findWeaponsByPerkGroups([[9401], [9402]], "hand");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.name).toBe("Split Column Gun");
   });
 
   test("closeDb closes current database instance", () => {
