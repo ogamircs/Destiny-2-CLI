@@ -30,6 +30,17 @@ export interface SavedSearch {
   createdAt: number;
 }
 
+export type RollSourceKind = "url" | "file";
+
+export interface RollSourceState {
+  sourceInput: string;
+  sourceResolved: string;
+  sourceKind: RollSourceKind;
+  sourceUpdatedAt: number;
+  cacheText: string | null;
+  cacheUpdatedAt: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // Schema migrations
 // ---------------------------------------------------------------------------
@@ -67,6 +78,18 @@ CREATE TABLE IF NOT EXISTS saved_searches (
   name       TEXT    NOT NULL PRIMARY KEY,
   query      TEXT    NOT NULL,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+  `.trim(),
+  // Migration 1
+  `
+CREATE TABLE IF NOT EXISTS roll_source (
+  id               INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+  source_input     TEXT    NOT NULL,
+  source_resolved  TEXT    NOT NULL,
+  source_kind      TEXT    NOT NULL CHECK (source_kind IN ('url', 'file')),
+  source_updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  cache_text       TEXT,
+  cache_updated_at INTEGER
 );
   `.trim(),
 ];
@@ -331,6 +354,79 @@ export function listSearches(): SavedSearch[] {
 export function deleteSearch(name: string): void {
   const db = openLocalDb();
   db.query("DELETE FROM saved_searches WHERE name = ?").run(name);
+}
+
+// ---------------------------------------------------------------------------
+// Roll source
+// ---------------------------------------------------------------------------
+
+export function saveRollSource(
+  sourceInput: string,
+  sourceResolved: string,
+  sourceKind: RollSourceKind,
+  cacheText: string
+): void {
+  const db = openLocalDb();
+  db.query(
+    `INSERT INTO roll_source (
+       id, source_input, source_resolved, source_kind, source_updated_at, cache_text, cache_updated_at
+     ) VALUES (
+       1, ?, ?, ?, unixepoch(), ?, unixepoch()
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       source_input = excluded.source_input,
+       source_resolved = excluded.source_resolved,
+       source_kind = excluded.source_kind,
+       source_updated_at = unixepoch(),
+       cache_text = excluded.cache_text,
+       cache_updated_at = unixepoch()`
+  ).run(sourceInput, sourceResolved, sourceKind, cacheText);
+}
+
+export function updateRollSourceCache(cacheText: string): void {
+  const db = openLocalDb();
+  const result = db
+    .query(
+      `UPDATE roll_source
+       SET cache_text = ?, cache_updated_at = unixepoch()
+       WHERE id = 1`
+    )
+    .run(cacheText) as { changes: number };
+
+  if (result.changes === 0) {
+    throw new Error(
+      "No roll source configured. Run: destiny rolls source set <voltron|choosy|url|file>"
+    );
+  }
+}
+
+export function getRollSource(): RollSourceState | null {
+  const db = openLocalDb();
+  const row = db
+    .query(
+      `SELECT source_input, source_resolved, source_kind, source_updated_at, cache_text, cache_updated_at
+       FROM roll_source
+       WHERE id = 1`
+    )
+    .get() as {
+    source_input: string;
+    source_resolved: string;
+    source_kind: RollSourceKind;
+    source_updated_at: number;
+    cache_text: string | null;
+    cache_updated_at: number | null;
+  } | null;
+
+  if (!row) return null;
+
+  return {
+    sourceInput: row.source_input,
+    sourceResolved: row.source_resolved,
+    sourceKind: row.source_kind,
+    sourceUpdatedAt: row.source_updated_at,
+    cacheText: row.cache_text,
+    cacheUpdatedAt: row.cache_updated_at,
+  };
 }
 
 // ---------------------------------------------------------------------------

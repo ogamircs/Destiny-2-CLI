@@ -10,6 +10,7 @@ import { registerTagCommand, registerNoteCommand } from "./commands/tag.ts";
 import { registerSearchCommand } from "./commands/search.ts";
 import { registerRollsCommand } from "./commands/rolls.ts";
 import { registerFarmingCommand } from "./commands/farming.ts";
+import { registerLoadoutCommand } from "./commands/loadout.ts";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -37,6 +38,7 @@ export function createProgram(): Command {
   registerSearchCommand(program);
   registerRollsCommand(program);
   registerFarmingCommand(program);
+  registerLoadoutCommand(program);
 
   return program;
 }

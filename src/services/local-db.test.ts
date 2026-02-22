@@ -47,6 +47,9 @@ const {
   saveSearch,
   listSearches,
   deleteSearch,
+  saveRollSource,
+  getRollSource,
+  updateRollSourceCache,
 } = await import(`./local-db.ts?test=${Date.now()}`);
 
 // ---------------------------------------------------------------------------
@@ -229,6 +232,56 @@ describe("saved searches", () => {
     const after = listSearches();
     expect(after.map((s) => s.name)).not.toContain("nightfall");
     expect(after.map((s) => s.name)).toContain("armor-grind");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Roll source
+// ---------------------------------------------------------------------------
+describe("roll source", () => {
+  beforeEach(() => {
+    const db = openLocalDb();
+    db.query("DELETE FROM roll_source").run();
+  });
+
+  test("saveRollSource / getRollSource round-trip with timestamps", () => {
+    saveRollSource(
+      "voltron",
+      "https://raw.githubusercontent.com/48klocs/dim-wish-list-sources/master/voltron.txt",
+      "url",
+      "title:Test\\ndimwishlist:item=1&perks=10"
+    );
+
+    const source = getRollSource();
+    expect(source).not.toBeNull();
+    expect(source!.sourceInput).toBe("voltron");
+    expect(source!.sourceKind).toBe("url");
+    expect(source!.sourceResolved).toContain("voltron.txt");
+    expect(source!.cacheText).toContain("dimwishlist:item=1");
+    expect(typeof source!.sourceUpdatedAt).toBe("number");
+    expect(typeof source!.cacheUpdatedAt).toBe("number");
+  });
+
+  test("updateRollSourceCache updates cached text for existing source", () => {
+    saveRollSource(
+      "voltron",
+      "https://raw.githubusercontent.com/48klocs/dim-wish-list-sources/master/voltron.txt",
+      "url",
+      "old"
+    );
+
+    updateRollSourceCache("new-cache-content");
+
+    const source = getRollSource();
+    expect(source).not.toBeNull();
+    expect(source!.cacheText).toBe("new-cache-content");
+    expect(typeof source!.cacheUpdatedAt).toBe("number");
+  });
+
+  test("updateRollSourceCache throws when no source is configured", () => {
+    expect(() => updateRollSourceCache("cache")).toThrow(
+      "No roll source configured"
+    );
   });
 });
 

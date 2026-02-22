@@ -219,6 +219,10 @@ Space = AND (implicit). `or` = lower-precedence OR. `-` or `not:` prefix = negat
 Grade your weapons against a DIM-format wishlist.
 
 ```bash
+# Set a default source once, then appraise without --source
+destiny rolls source set voltron
+destiny rolls appraise
+
 # Appraise all weapons against a local wishlist file
 destiny rolls appraise --source ~/wishlists/pvp.txt
 
@@ -236,6 +240,35 @@ Grades: **GOD** (all perk column matched), **GOOD** (partial match), **TRASH** (
 
 Wishlists must be in [DIM format](https://github.com/48klocs/dim-wish-list-sources): `dimwishlist:item=HASH&perks=P1,P2&notes:...`
 
+### Roll Source Management
+
+Manage a default wishlist source with local cache + refresh timestamps.
+
+```bash
+# Set and cache default source (preset, URL, or file path)
+destiny rolls source set voltron
+destiny rolls source set choosy
+destiny rolls source set ~/wishlists/pvp.txt
+
+# Show current source, cache status, and timestamps
+destiny rolls source show
+
+# Refresh cache from source (falls back to cached copy on failure)
+destiny rolls source refresh
+```
+
+### Roll Finder
+
+Find weapons in the manifest that can roll a requested perk combination.
+
+```bash
+# Find hand cannons that can roll both perks
+destiny rolls find --perk "Outlaw" --perk "Rampage" --archetype "hand cannon"
+
+# JSON output
+destiny rolls find --perk "Headstone" --perk "Demolitionist" --json
+```
+
 ### Farming Mode
 
 Clear a character's unequipped, unlocked items to the vault in one shot — then restore them when the farming session is done.
@@ -252,6 +285,26 @@ destiny farming stop --character hunter
 ```
 
 The recovery loadout is saved before any items move, so `stop` can restore from partial failures.
+
+### Loadouts v1
+
+Save and apply equipment snapshots (item/equip state).
+
+```bash
+# Save currently equipped items from a character
+destiny loadout create "raid-dps" --character warlock
+
+# List saved loadouts
+destiny loadout list
+
+# Apply a loadout (auto-selects matching class if --character is omitted)
+destiny loadout apply "raid-dps"
+
+# Manage loadout files
+destiny loadout export "raid-dps" --out ./raid-dps.json
+destiny loadout import ./raid-dps.json --name "raid-dps-v2"
+destiny loadout delete "raid-dps-v2"
+```
 
 ### Stats
 
@@ -323,12 +376,14 @@ src/
 │   ├── stats.ts          # stats
 │   ├── tag.ts            # tag add/remove/list + note set/clear/show
 │   ├── search.ts         # search DSL
-│   ├── rolls.ts          # rolls appraise
-│   └── farming.ts        # farming start/stop/status
+│   ├── rolls.ts          # rolls appraise/find/source
+│   ├── farming.ts        # farming start/stop/status
+│   └── loadout.ts        # loadout create/list/apply/delete/export/import
 ├── api/                  # Thin fetch wrappers for Bungie API endpoints
 ├── services/             # Core services (see below)
 │   ├── item-index.ts     # Merges profile + manifest + instance data into a flat index
-│   ├── local-db.ts       # Persistent SQLite for tags, notes, loadouts, saved searches
+│   ├── local-db.ts       # Persistent SQLite for tags, notes, loadouts, saved searches, roll source cache
+│   ├── roll-source.ts    # Roll source preset resolution + cache refresh/fallback
 │   ├── move-planner.ts   # Validates and plans item transfers before touching the API
 │   ├── search.ts         # Query DSL parser
 │   ├── wishlist.ts       # DIM wishlist parser + roll grader
@@ -573,6 +628,6 @@ Grading rules:
 
 - **Tokens** are stored obfuscated at `~/.config/destiny-cli/tokens.json`
 - **Manifest** (item definitions) is cached at `~/.cache/destiny-cli/` and auto-updates when Bungie releases a new version
-- **Local database** (tags, notes, loadouts, saved searches) is stored at `~/.config/destiny-cli/local.db`
+- **Local database** (tags, notes, loadouts, saved searches, roll source cache) is stored at `~/.config/destiny-cli/local.db`
 - **Rate limiting** is handled automatically (25 req/s with Retry-After backoff)
 - **Refresh tokens** last 90 days — you won't need to re-login often
