@@ -462,3 +462,189 @@ describe("note show", () => {
     expect(result.logs.some((l) => l.includes("Best PvP exotic"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// tag remove tests
+// ---------------------------------------------------------------------------
+
+describe("tag remove", () => {
+  afterEach(() => mock.restore());
+
+  test("single match — calls removeTag, prints success", async () => {
+    const removeTagMock = mock(() => {});
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: mock(async () => {}),
+    }));
+    mock.module("../api/profile.ts", () => ({
+      getProfile: mock(async () => makeProfile()),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      addTag: mock(() => {}),
+      removeTag: removeTagMock,
+      getTags: mock(() => []),
+      setNote: mock(() => {}),
+      clearNote: mock(() => {}),
+      getNote: mock(() => null),
+      itemKey: (item: any) => item.instanceId ?? `hash:${item.hash}`,
+    }));
+    mock.module("../services/item-index.ts", () => ({
+      buildInventoryIndex: mock(() => makeSingleIndex()),
+      getRequiredComponents: () => [200, 201, 205, 102, 300],
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerTagCommand } = await import(
+      `./tag.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerTagCommand, [
+      "tag",
+      "remove",
+      "Ace of Spades",
+      "god-roll",
+    ]);
+    expect(removeTagMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Ace of Spades" }),
+      "god-roll"
+    );
+    expect(result.logs.some((l) => l.includes("Removed tag"))).toBe(true);
+    expect(result.exitCode).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// note set/clear tests
+// ---------------------------------------------------------------------------
+
+describe("note set/clear", () => {
+  afterEach(() => mock.restore());
+
+  test("set stores note text", async () => {
+    const setNoteMock = mock(() => {});
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: mock(async () => {}),
+    }));
+    mock.module("../api/profile.ts", () => ({
+      getProfile: mock(async () => makeProfile()),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      addTag: mock(() => {}),
+      removeTag: mock(() => {}),
+      getTags: mock(() => []),
+      setNote: setNoteMock,
+      clearNote: mock(() => {}),
+      getNote: mock(() => null),
+      itemKey: (item: any) => item.instanceId ?? `hash:${item.hash}`,
+    }));
+    mock.module("../services/item-index.ts", () => ({
+      buildInventoryIndex: mock(() => makeSingleIndex()),
+      getRequiredComponents: () => [200, 201, 205, 102, 300],
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerNoteCommand } = await import(
+      `./tag.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerNoteCommand, [
+      "note",
+      "set",
+      "Ace of Spades",
+      "Great in PvP",
+    ]);
+    expect(setNoteMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Ace of Spades" }),
+      "Great in PvP"
+    );
+    expect(result.logs.some((l) => l.includes("Note set"))).toBe(true);
+    expect(result.exitCode).toBeNull();
+  });
+
+  test("set rejects empty note text", async () => {
+    const setNoteMock = mock(() => {});
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: mock(async () => {}),
+    }));
+    mock.module("../api/profile.ts", () => ({
+      getProfile: mock(async () => makeProfile()),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      addTag: mock(() => {}),
+      removeTag: mock(() => {}),
+      getTags: mock(() => []),
+      setNote: setNoteMock,
+      clearNote: mock(() => {}),
+      getNote: mock(() => null),
+      itemKey: (item: any) => item.instanceId ?? `hash:${item.hash}`,
+    }));
+    mock.module("../services/item-index.ts", () => ({
+      buildInventoryIndex: mock(() => makeSingleIndex()),
+      getRequiredComponents: () => [200, 201, 205, 102, 300],
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerNoteCommand } = await import(
+      `./tag.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerNoteCommand, [
+      "note",
+      "set",
+      "Ace of Spades",
+      "  ",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(setNoteMock).not.toHaveBeenCalled();
+  });
+
+  test("clear removes note", async () => {
+    const clearNoteMock = mock(() => {});
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: mock(async () => {}),
+    }));
+    mock.module("../api/profile.ts", () => ({
+      getProfile: mock(async () => makeProfile()),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      addTag: mock(() => {}),
+      removeTag: mock(() => {}),
+      getTags: mock(() => []),
+      setNote: mock(() => {}),
+      clearNote: clearNoteMock,
+      getNote: mock(() => null),
+      itemKey: (item: any) => item.instanceId ?? `hash:${item.hash}`,
+    }));
+    mock.module("../services/item-index.ts", () => ({
+      buildInventoryIndex: mock(() => makeSingleIndex()),
+      getRequiredComponents: () => [200, 201, 205, 102, 300],
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerNoteCommand } = await import(
+      `./tag.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerNoteCommand, [
+      "note",
+      "clear",
+      "Ace of Spades",
+    ]);
+    expect(clearNoteMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Ace of Spades" })
+    );
+    expect(result.logs.some((l) => l.includes("Note cleared"))).toBe(true);
+    expect(result.exitCode).toBeNull();
+  });
+});
