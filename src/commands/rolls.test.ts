@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { Command } from "commander";
+import { join } from "path";
+import { tmpdir } from "os";
+import { rmSync, writeFileSync } from "fs";
 
 function makeProfile() {
   return {
@@ -300,6 +303,107 @@ describe("rolls appraise command", () => {
     expect(output[0].notes).toContain("keep for pvp");
     expect(result.exitCode).toBeNull();
   });
+
+  test("layers popularity score when requested while keeping deterministic grade ordering", async () => {
+    const loadWishlistForAppraiseMock = mock(async (_source?: string) => ({
+      wishlist: {
+        title: "Test Wishlist",
+        entries: [{ itemHash: 1001, perkHashes: [11], notes: "keep for pvp" }],
+        byItemHash: new Map([
+          [1001, [{ itemHash: 1001, perkHashes: [11], notes: "keep for pvp" }]],
+        ]),
+      },
+      sourceLabel: "/tmp/wishlist.txt",
+      usedCache: false,
+      cacheUpdatedAt: null,
+    }));
+
+    const gradeItemMock = mock((hash: number) => {
+      if (hash === 1001) return "god";
+      if (hash === 1002) return "good";
+      return "unknown";
+    });
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: mock(async () => {}),
+      searchPerks: mock(() => []),
+      findWeaponsByPerkGroups: mock(() => []),
+      lookupItem: mock(() => null),
+      lookupPerk: (perkHash: number) => ({
+        hash: perkHash,
+        name: perkHash === 11 ? "Outlaw" : perkHash === 22 ? "Kill Clip" : "Unknown Perk",
+        description: "",
+      }),
+    }));
+    mock.module("../api/profile.ts", () => ({
+      getProfile: mock(async () => makeProfile()),
+    }));
+    mock.module("../services/item-index.ts", () => ({
+      buildInventoryIndex: mock(() => makeIndex()),
+      getRequiredComponents: () => [200, 201, 205, 102, 300],
+    }));
+    mock.module("../services/roll-source.ts", () => ({
+      setRollSourceAndRefresh: mock(async () => {
+        throw new Error("not used");
+      }),
+      refreshRollSourceWithFallback: mock(async () => {
+        throw new Error("not used");
+      }),
+      loadWishlistForAppraise: loadWishlistForAppraiseMock,
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      getRollSource: mock(() => null),
+    }));
+    mock.module("../services/wishlist.ts", () => ({
+      gradeItem: gradeItemMock,
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const popularityFile = join(
+      tmpdir(),
+      `rolls-popularity-${Date.now()}-${Math.random()}.json`
+    );
+    writeFileSync(
+      popularityFile,
+      JSON.stringify({
+        1001: 0.4,
+        1002: 0.95,
+      })
+    );
+
+    try {
+      const { registerRollsCommand } = await import(
+        `./rolls.ts?t=${Date.now()}-${Math.random()}`
+      );
+
+      const result = await runCommand(registerRollsCommand, [
+        "rolls",
+        "appraise",
+        "--source",
+        "/tmp/wishlist.txt",
+        "--with-popularity",
+        "--popularity-source",
+        popularityFile,
+        "--json",
+      ]);
+
+      expect(loadWishlistForAppraiseMock).toHaveBeenCalledWith("/tmp/wishlist.txt");
+      expect(result.exitCode).toBeNull();
+      expect(result.logs).toHaveLength(1);
+
+      const output = JSON.parse(result.logs[0]!);
+      expect(output).toHaveLength(2);
+      expect(output[0].grade).toBe("god");
+      expect(output[0].popularityScore).toBe(0.4);
+      expect(output[0].score).toBeGreaterThan(0);
+      expect(output[1].grade).toBe("good");
+      expect(output[1].popularityScore).toBe(0.95);
+    } finally {
+      rmSync(popularityFile, { force: true });
+    }
+  });
 });
 
 describe("rolls find", () => {
@@ -521,6 +625,110 @@ describe("rolls find", () => {
       )
     ).toBe(true);
     expect(result.errors).toHaveLength(0);
+  });
+
+  test("supports --query groups with perk alternatives and optional popularity overlay", async () => {
+    const ensureManifestMock = mock(async () => {});
+    const searchPerksMock = mock((query: string) => {
+      if (query === "outlaw") {
+        return [{ hash: 9001, name: "Outlaw", description: "" }];
+      }
+      if (query === "rapid hit") {
+        return [{ hash: 9003, name: "Rapid Hit", description: "" }];
+      }
+      if (query === "payload") {
+        return [
+          { hash: 9101, name: "Explosive Payload", description: "" },
+          { hash: 9102, name: "Timed Payload", description: "" },
+        ];
+      }
+      return [];
+    });
+    const findWeaponsByPerkGroupsMock = mock(() => [
+      {
+        hash: 200,
+        name: "Fatebringer",
+        archetype: "Hand Cannon",
+        tierTypeName: "Legendary",
+        perkHashes: [9003, 9102],
+      },
+    ]);
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: ensureManifestMock,
+      searchPerks: searchPerksMock,
+      findWeaponsByPerkGroups: findWeaponsByPerkGroupsMock,
+      lookupItem: mock(() => null),
+      lookupPerk: (hash: number) => {
+        if (hash === 9001) {
+          return { hash, name: "Outlaw", description: "" };
+        }
+        if (hash === 9003) {
+          return { hash, name: "Rapid Hit", description: "" };
+        }
+        if (hash === 9102) {
+          return { hash, name: "Timed Payload", description: "" };
+        }
+        return null;
+      },
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const popularityFile = join(
+      tmpdir(),
+      `rolls-find-popularity-${Date.now()}-${Math.random()}.json`
+    );
+    writeFileSync(
+      popularityFile,
+      JSON.stringify({
+        200: 0.88,
+      })
+    );
+
+    try {
+      const { registerRollsCommand } = await import(
+        `./rolls.ts?t=${Date.now()}-${Math.random()}`
+      );
+
+      const result = await runCommand(registerRollsCommand, [
+        "rolls",
+        "find",
+        "--query",
+        "outlaw|rapid hit + payload",
+        "--with-popularity",
+        "--popularity-source",
+        popularityFile,
+        "--json",
+      ]);
+
+      expect(result.exitCode).toBeNull();
+      expect(ensureManifestMock).toHaveBeenCalledTimes(1);
+      expect(searchPerksMock).toHaveBeenNthCalledWith(1, "outlaw");
+      expect(searchPerksMock).toHaveBeenNthCalledWith(2, "rapid hit");
+      expect(searchPerksMock).toHaveBeenNthCalledWith(3, "payload");
+      expect(findWeaponsByPerkGroupsMock).toHaveBeenCalledWith(
+        [[9001, 9003], [9101, 9102]],
+        undefined
+      );
+
+      expect(result.logs).toHaveLength(1);
+      const payload = JSON.parse(result.logs[0]!);
+      expect(payload).toEqual([
+        {
+          hash: 200,
+          name: "Fatebringer",
+          archetype: "Hand Cannon",
+          tier: "Legendary",
+          matchedPerks: ["Rapid Hit", "Timed Payload"],
+          popularityScore: 0.88,
+          score: expect.any(Number),
+        },
+      ]);
+    } finally {
+      rmSync(popularityFile, { force: true });
+    }
   });
 });
 

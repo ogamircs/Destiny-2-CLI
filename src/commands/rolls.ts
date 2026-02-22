@@ -2,21 +2,13 @@ import { Command } from "commander";
 import chalk from "chalk";
 import Table from "cli-table3";
 import { getProfile, type CharacterData } from "../api/profile.ts";
-import {
-  ensureManifest,
-  findWeaponsByPerkGroups,
-  lookupPerk,
-  searchPerks,
-} from "../services/manifest-cache.ts";
+import * as manifestCache from "../services/manifest-cache.ts";
 import { buildInventoryIndex, getRequiredComponents } from "../services/item-index.ts";
-import { getRollSource } from "../services/local-db.ts";
-import {
-  loadWishlistForAppraise,
-  refreshRollSourceWithFallback,
-  setRollSourceAndRefresh,
-} from "../services/roll-source.ts";
+import * as localDb from "../services/local-db.ts";
+import * as rollSource from "../services/roll-source.ts";
 import { gradeItem } from "../services/wishlist.ts";
 import type { WishlistGrade } from "../services/wishlist.ts";
+import * as popularity from "../services/popularity.ts";
 import { DestinyComponentType } from "../utils/constants.ts";
 import { className, dim, error, header, success } from "../ui/format.ts";
 import { formatError } from "../utils/errors.ts";
@@ -46,6 +38,13 @@ const GRADE_ORDER: Record<WishlistGrade, number> = {
   unknown: 3,
 };
 
+const GRADE_BASE_SCORE: Record<WishlistGrade, number> = {
+  god: 1,
+  good: 0.75,
+  trash: 0.15,
+  unknown: 0.45,
+};
+
 interface ResolvedPerkGroup {
   query: string;
   perkHashes: number[];
@@ -60,8 +59,36 @@ function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
+function roundScore(score: number): number {
+  return Math.round(score * 1000) / 1000;
+}
+
+function parseFinderQuery(query: string): string[][] {
+  const groupParts = query
+    .split("+")
+    .map((group) => group.trim())
+    .filter((group) => group.length > 0);
+
+  if (groupParts.length === 0) {
+    throw new Error("Query must contain at least one perk");
+  }
+
+  const groups = groupParts.map((group) =>
+    group
+      .split("|")
+      .map((term) => term.trim())
+      .filter((term) => term.length > 0)
+  );
+
+  if (groups.some((group) => group.length === 0)) {
+    throw new Error("Each query perk group must include at least one perk");
+  }
+
+  return groups;
+}
+
 function resolvePerkGroup(query: string): ResolvedPerkGroup {
-  const matches = searchPerks(query);
+  const matches = manifestCache.searchPerks(query);
   if (matches.length === 0) {
     throw new Error(`Perk "${query}" not found in manifest`);
   }
@@ -81,6 +108,20 @@ function resolvePerkGroup(query: string): ResolvedPerkGroup {
   };
 }
 
+function resolvePerkAlternativeGroup(queries: string[]): ResolvedPerkGroup {
+  const resolved = queries.map((query) => resolvePerkGroup(query));
+  const perkHashes = Array.from(
+    new Set(resolved.flatMap((group) => group.perkHashes))
+  );
+  const perkNames = uniqueStrings(resolved.flatMap((group) => group.perkNames));
+
+  return {
+    query: queries.join(" | "),
+    perkHashes,
+    perkNames,
+  };
+}
+
 function matchedPerkNamesForWeapon(
   weaponPerks: number[],
   resolvedGroups: ResolvedPerkGroup[]
@@ -93,7 +134,7 @@ function matchedPerkNamesForWeapon(
     if (!matchedHash) {
       continue;
     }
-    const perk = lookupPerk(matchedHash);
+    const perk = manifestCache.lookupPerk(matchedHash);
     matched.push(perk?.name || group.perkNames[0] || group.query);
   }
 
@@ -105,6 +146,19 @@ function formatUnixTimestamp(timestamp: number | null): string {
     return "never";
   }
   return new Date(timestamp * 1000).toLocaleString();
+}
+
+function deterministicFinderScore(tier: string): number {
+  switch (tier.toLowerCase()) {
+    case "exotic":
+      return 0.95;
+    case "legendary":
+      return 0.8;
+    case "rare":
+      return 0.6;
+    default:
+      return 0.5;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +181,7 @@ export function registerRollsCommand(program: Command) {
       try {
         const { state, wishlist } = await withSpinner(
           "Setting roll source...",
-          () => setRollSourceAndRefresh(sourceInput)
+          () => rollSource.setRollSourceAndRefresh(sourceInput)
         );
 
         console.log(success(`Roll source set to "${state.sourceInput}"`));
@@ -148,7 +202,10 @@ export function registerRollsCommand(program: Command) {
     .description("Show the current source and cache status")
     .action(() => {
       try {
-        const state = getRollSource();
+        const state =
+          typeof localDb.getRollSource === "function"
+            ? localDb.getRollSource()
+            : null;
 
         if (!state) {
           console.log(
@@ -183,7 +240,7 @@ export function registerRollsCommand(program: Command) {
     .action(async () => {
       try {
         const refreshed = await withSpinner("Refreshing roll source...", () =>
-          refreshRollSourceWithFallback()
+          rollSource.refreshRollSourceWithFallback()
         );
 
         if (refreshed.usedCache) {
@@ -213,37 +270,110 @@ export function registerRollsCommand(program: Command) {
   rolls
     .command("find")
     .description("Find weapons that can roll specific perk combinations")
-    .requiredOption(
+    .option(
       "--perk <perk>",
       "Perk name (repeat this flag to require multiple perks)",
       collectPerkFlag,
       []
     )
+    .option(
+      "--query <query>",
+      'Perk query mode. Use "+" for required groups and "|" for alternatives (example: "outlaw|rapid hit + payload")'
+    )
     .option("--archetype <name>", "Filter by weapon archetype (e.g. hand cannon)")
+    .option(
+      "--with-popularity",
+      "Overlay optional popularity scores on top of deterministic roll-finder ranking"
+    )
+    .option(
+      "--popularity-source <file|url>",
+      "Popularity JSON source (file or URL) for optional score overlay"
+    )
     .option("--json", "Output results as JSON")
     .action(async (opts) => {
       try {
-        await withSpinner("Loading manifest...", () => ensureManifest());
+        await withSpinner("Loading manifest...", () => manifestCache.ensureManifest());
 
         const perkQueries = (opts.perk as string[])
           .map((value) => value.trim())
           .filter((value) => value.length > 0);
+        const queryGroups = opts.query
+          ? parseFinderQuery(String(opts.query))
+          : [];
 
-        if (perkQueries.length === 0) {
-          throw new Error("At least one --perk value is required");
+        if (perkQueries.length === 0 && queryGroups.length === 0) {
+          throw new Error("Provide at least one --perk value or a --query value");
         }
 
-        const resolvedGroups = perkQueries.map((query) => resolvePerkGroup(query));
+        const resolvedGroups: ResolvedPerkGroup[] = [];
+        for (const queryGroup of queryGroups) {
+          resolvedGroups.push(resolvePerkAlternativeGroup(queryGroup));
+        }
+
+        for (const perkQuery of perkQueries) {
+          resolvedGroups.push(resolvePerkGroup(perkQuery));
+        }
+
         const perkGroups = resolvedGroups.map((group) => group.perkHashes);
 
-        const matches = findWeaponsByPerkGroups(perkGroups, opts.archetype);
-        const rows = matches.map((weapon) => ({
-          hash: weapon.hash,
-          name: weapon.name,
-          archetype: weapon.archetype,
-          tier: weapon.tierTypeName,
-          matchedPerks: matchedPerkNamesForWeapon(weapon.perkHashes, resolvedGroups),
-        }));
+        let popularityDataset: popularity.PopularityDataset | null = null;
+        if (opts.withPopularity) {
+          popularityDataset = await withSpinner("Loading popularity source...", () =>
+            popularity.loadPopularitySource(opts.popularitySource)
+          );
+        }
+
+        const matches = manifestCache.findWeaponsByPerkGroups(
+          perkGroups,
+          opts.archetype
+        );
+        const rows = matches.map((weapon) => {
+          const matchedPerks = matchedPerkNamesForWeapon(
+            weapon.perkHashes,
+            resolvedGroups
+          );
+          const baseRow = {
+            hash: weapon.hash,
+            name: weapon.name,
+            archetype: weapon.archetype,
+            tier: weapon.tierTypeName,
+            matchedPerks,
+          };
+
+          if (!opts.withPopularity || !popularityDataset) {
+            return baseRow;
+          }
+
+          const deterministicScore = deterministicFinderScore(weapon.tierTypeName);
+          const popularityScore = popularity.getPopularityScore(
+            popularityDataset,
+            weapon.hash
+          );
+          const score = roundScore(
+            popularity.blendDeterministicWithPopularity(
+              deterministicScore,
+              popularityScore ?? undefined,
+              0.2
+            )
+          );
+
+          return {
+            ...baseRow,
+            popularityScore,
+            score,
+          };
+        });
+
+        if (opts.withPopularity) {
+          rows.sort((a, b) => {
+            const aScore = (a as { score?: number }).score ?? 0;
+            const bScore = (b as { score?: number }).score ?? 0;
+            if (aScore !== bScore) {
+              return bScore - aScore;
+            }
+            return a.name.localeCompare(b.name);
+          });
+        }
 
         if (opts.json) {
           console.log(JSON.stringify(rows, null, 2));
@@ -267,18 +397,32 @@ export function registerRollsCommand(program: Command) {
             chalk.bold("Archetype"),
             chalk.bold("Tier"),
             chalk.bold("Matched Perks"),
+            ...(opts.withPopularity ? [chalk.bold("Score")] : []),
           ],
           style: { head: [], border: ["dim"] },
-          colWidths: [36, 20, 12, 36],
+          colWidths: opts.withPopularity
+            ? [30, 18, 12, 30, 10]
+            : [36, 20, 12, 36],
         });
 
         for (const row of rows) {
-          table.push([
+          const baseCells = [
             row.name,
             row.archetype,
             row.tier,
             row.matchedPerks.join(", "),
-          ]);
+          ];
+
+          if (opts.withPopularity) {
+            const scoreLabel =
+              (row as { score?: number; popularityScore?: number | null }).score !==
+              undefined
+                ? `${((row as { score: number }).score * 100).toFixed(1)}%`
+                : "—";
+            table.push([...baseCells, scoreLabel]);
+          } else {
+            table.push(baseCells);
+          }
         }
 
         console.log(table.toString());
@@ -297,10 +441,18 @@ export function registerRollsCommand(program: Command) {
       "Wishlist source (voltron|choosy|file|url). Uses configured source when omitted."
     )
     .option("--character <class>", "Filter to a specific character (titan/hunter/warlock)")
+    .option(
+      "--with-popularity",
+      "Overlay optional popularity weighting on top of deterministic wishlist grades"
+    )
+    .option(
+      "--popularity-source <file|url>",
+      "Popularity JSON source (file or URL) for optional score overlay"
+    )
     .option("--json", "Output results as JSON")
     .action(async (opts) => {
       try {
-        await withSpinner("Loading manifest...", () => ensureManifest());
+        await withSpinner("Loading manifest...", () => manifestCache.ensureManifest());
 
         const components = [
           ...getRequiredComponents(),
@@ -310,7 +462,7 @@ export function registerRollsCommand(program: Command) {
         const [profile, wishlistResult] = await Promise.all([
           withSpinner("Fetching inventory...", () => getProfile(components)),
           withSpinner("Loading wishlist...", () =>
-            loadWishlistForAppraise(opts.source)
+            rollSource.loadWishlistForAppraise(opts.source)
           ),
         ]);
         const wishlist = wishlistResult.wishlist;
@@ -323,6 +475,13 @@ export function registerRollsCommand(program: Command) {
             chalk.yellow(
               `! Wishlist refresh failed${reason}. Using cached source "${wishlistResult.sourceLabel}" from ${formatUnixTimestamp(wishlistResult.cacheUpdatedAt)}.`
             )
+          );
+        }
+
+        let popularityDataset: popularity.PopularityDataset | null = null;
+        if (opts.withPopularity) {
+          popularityDataset = await withSpinner("Loading popularity source...", () =>
+            popularity.loadPopularitySource(opts.popularitySource)
           );
         }
 
@@ -356,12 +515,24 @@ export function registerRollsCommand(program: Command) {
         // Grade each weapon
         const graded = weapons.map((item) => {
           const grade = gradeItem(item.hash, item.perks, wishlist);
+          const deterministicScore = GRADE_BASE_SCORE[grade];
+          const popularityScore =
+            opts.withPopularity && popularityDataset
+              ? popularity.getPopularityScore(popularityDataset, item.hash)
+              : null;
+          const score = roundScore(
+            popularity.blendDeterministicWithPopularity(
+              deterministicScore,
+              popularityScore ?? undefined,
+              opts.withPopularity ? 0.15 : 0
+            )
+          );
 
           // Resolve perk names for matched perks
           const matchedPerks: string[] = [];
           if (item.perks) {
             for (const ph of item.perks) {
-              const perk = lookupPerk(ph);
+              const perk = manifestCache.lookupPerk(ph);
               if (perk && perk.name && perk.name !== "Unknown Perk") {
                 matchedPerks.push(perk.name);
               }
@@ -375,21 +546,40 @@ export function registerRollsCommand(program: Command) {
             .filter(Boolean)
             .join("; ");
 
-          return { item, grade, matchedPerks, notes };
+          return {
+            item,
+            grade,
+            score,
+            popularityScore,
+            matchedPerks,
+            notes,
+          };
         });
 
-        // Sort: god → good → trash → unknown
-        graded.sort(
-          (a, b) => GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade]
-        );
+        // Deterministic grade remains primary. Popularity only refines ordering within grade.
+        graded.sort((a, b) => {
+          const gradeOrder = GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade];
+          if (gradeOrder !== 0) {
+            return gradeOrder;
+          }
+
+          if (a.score !== b.score) {
+            return b.score - a.score;
+          }
+
+          return a.item.name.localeCompare(b.item.name);
+        });
 
         if (opts.json) {
-          const out = graded.map(({ item, grade, matchedPerks, notes }) => ({
+          const out = graded.map(
+            ({ item, grade, matchedPerks, notes, score, popularityScore }) => ({
             name: item.name,
             tier: item.tier,
             slot: item.slot,
             power: item.power,
             grade,
+            score,
+            popularityScore,
             matchedPerks,
             notes,
           }));
@@ -407,12 +597,13 @@ export function registerRollsCommand(program: Command) {
             chalk.bold("Power"),
             chalk.bold("Matched Perks"),
             chalk.bold("Notes"),
+            chalk.bold("Score"),
           ],
           style: { head: [], border: ["dim"] },
-          colWidths: [8, 34, 12, 10, 7, 32, 28],
+          colWidths: [8, 30, 10, 10, 7, 28, 26, 9],
         });
 
-        for (const { item, grade, matchedPerks, notes } of graded) {
+        for (const { item, grade, matchedPerks, notes, score } of graded) {
           table.push([
             gradeLabel(grade),
             item.name,
@@ -421,6 +612,7 @@ export function registerRollsCommand(program: Command) {
             item.power !== undefined ? String(item.power) : "—",
             matchedPerks.slice(0, 3).join(", "),
             notes.slice(0, 50),
+            `${(score * 100).toFixed(1)}%`,
           ]);
         }
 

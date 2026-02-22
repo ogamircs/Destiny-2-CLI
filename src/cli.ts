@@ -11,6 +11,15 @@ import { registerSearchCommand } from "./commands/search.ts";
 import { registerRollsCommand } from "./commands/rolls.ts";
 import { registerFarmingCommand } from "./commands/farming.ts";
 import { registerLoadoutCommand } from "./commands/loadout.ts";
+import { registerOrganizeCommand } from "./commands/organize.ts";
+import { registerCompareCommand } from "./commands/compare.ts";
+import { registerArmoryCommand } from "./commands/armory.ts";
+import { registerProgressCommand } from "./commands/progress.ts";
+import { registerVendorsCommand } from "./commands/vendors.ts";
+import { registerRecordsCommand } from "./commands/records.ts";
+import { registerOptimizerCommand } from "./commands/optimizer.ts";
+import { registerSyncCommand } from "./commands/sync.ts";
+import { registerIntegrationsCommand } from "./commands/integrations.ts";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -39,6 +48,15 @@ export function createProgram(): Command {
   registerRollsCommand(program);
   registerFarmingCommand(program);
   registerLoadoutCommand(program);
+  registerOrganizeCommand(program);
+  registerCompareCommand(program);
+  registerArmoryCommand(program);
+  registerProgressCommand(program);
+  registerVendorsCommand(program);
+  registerRecordsCommand(program);
+  registerOptimizerCommand(program);
+  registerSyncCommand(program);
+  registerIntegrationsCommand(program);
 
   return program;
 }

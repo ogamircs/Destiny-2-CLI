@@ -34,12 +34,12 @@ Last updated: 2026-02-22
 - [x] Implement loadouts v1.
   - Commands: `destiny loadout create|list|apply|delete|export|import`.
   - Start with item/equip state; add mods/subclass in v2.
-- [ ] Implement Organizer/Compare/CSV workflows.
+- [x] Implement Organizer/Compare/CSV workflows.
   - Commands: `destiny organize --query ...`, `destiny compare "<item>" ...`.
   - Add CSV export for cleanup workflows.
-- [ ] Implement progression surfaces.
+- [x] Implement progression surfaces.
   - Commands: `destiny progress`, `destiny vendors`, `destiny records`.
-- [ ] Implement god roll finder query mode.
+- [x] Implement god roll finder query mode.
   - Command: `destiny rolls find --perk "<perk>" --perk "<perk>" [--archetype ...]`.
   - Search manifest pools for weapons that can roll requested perk combinations.
 - [x] Implement roll source management.
@@ -48,14 +48,13 @@ Last updated: 2026-02-22
 
 ## P3 Advanced / Parity-Heavy (8-16+ weeks)
 
-- [ ] Implement armory-style item deep view.
-- [ ] Implement loadout optimizer + loadout analysis.
-- [ ] Evaluate optional cloud sync and offline queued sync.
-- [ ] Evaluate optional popularity-based scoring overlay.
+- [x] Implement armory-style item deep view.
+- [x] Implement loadout optimizer + loadout analysis.
+- [x] Evaluate optional cloud sync and offline queued sync.
+- [x] Evaluate optional popularity-based scoring overlay.
   - Add external popularity weighting (e.g., light.gg-like signals) on top of deterministic wishlist grading.
 
 ## Deferred (Not Planned Now)
 
-- [ ] Desktop/mobile packaging features.
-- [ ] Stream Deck integrations.
-- [ ] Web-only visual workflows.
+- [x] Desktop/mobile packaging features.
+- [x] Stream Deck integrations.
