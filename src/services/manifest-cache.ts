@@ -36,6 +36,27 @@ export interface ManifestPerk {
   description: string;
 }
 
+export interface WeaponPerkPool {
+  hash: number;
+  name: string;
+  archetype: string;
+  tierTypeName: string;
+  perkHashes: number[];
+}
+
+type ManifestJsonRow = { json: string };
+type SocketEntry = {
+  randomizedPlugSetHash?: number;
+  reusablePlugSetHash?: number;
+};
+
+let plugSetCache = new Map<number, number[]>();
+let plugPerkCache = new Map<number, number[]>();
+
+function toSignedHash(hash: number): number {
+  return hash > 0x7fffffff ? hash - 0x100000000 : hash;
+}
+
 function getDbPath(): string {
   return join(getLocalPaths().manifestDir, "manifest.sqlite3");
 }
@@ -135,11 +156,11 @@ export async function ensureManifest(): Promise<void> {
 export function lookupItem(hash: number): ManifestItem | null {
   const database = getDb();
   // Bungie uses unsigned 32-bit hashes but stores them as signed in SQLite
-  const signedHash = hash > 0x7fffffff ? hash - 0x100000000 : hash;
+  const signedHash = toSignedHash(hash);
 
   const row = database
     .query("SELECT json FROM DestinyInventoryItemDefinition WHERE id = ?")
-    .get(signedHash) as { json: string } | null;
+    .get(signedHash) as ManifestJsonRow | null;
 
   if (!row) {
     debug(`Item not found in manifest: ${hash}`);
@@ -164,13 +185,13 @@ export function lookupItem(hash: number): ManifestItem | null {
 
 export function lookupBucket(hash: number): ManifestBucket | null {
   const database = getDb();
-  const signedHash = hash > 0x7fffffff ? hash - 0x100000000 : hash;
+  const signedHash = toSignedHash(hash);
 
   const row = database
     .query(
       "SELECT json FROM DestinyInventoryBucketDefinition WHERE id = ?"
     )
-    .get(signedHash) as { json: string } | null;
+    .get(signedHash) as ManifestJsonRow | null;
 
   if (!row) return null;
 
@@ -184,11 +205,11 @@ export function lookupBucket(hash: number): ManifestBucket | null {
 
 export function lookupPerk(hash: number): ManifestPerk | null {
   const database = getDb();
-  const signedHash = hash > 0x7fffffff ? hash - 0x100000000 : hash;
+  const signedHash = toSignedHash(hash);
 
   const row = database
     .query("SELECT json FROM DestinySandboxPerkDefinition WHERE id = ?")
-    .get(signedHash) as { json: string } | null;
+    .get(signedHash) as ManifestJsonRow | null;
 
   if (!row) return null;
 
@@ -204,7 +225,7 @@ export function searchItems(query: string): ManifestItem[] {
   const database = getDb();
   const rows = database
     .query("SELECT json FROM DestinyInventoryItemDefinition")
-    .all() as { json: string }[];
+    .all() as ManifestJsonRow[];
 
   const lowerQuery = query.toLowerCase();
   const results: ManifestItem[] = [];
@@ -232,9 +253,165 @@ export function searchItems(query: string): ManifestItem[] {
   return results;
 }
 
+export function searchPerks(query: string): ManifestPerk[] {
+  const database = getDb();
+  const rows = database
+    .query("SELECT json FROM DestinySandboxPerkDefinition")
+    .all() as ManifestJsonRow[];
+
+  const lowerQuery = query.toLowerCase().trim();
+  if (!lowerQuery) {
+    return [];
+  }
+
+  const results: ManifestPerk[] = [];
+
+  for (const row of rows) {
+    const data = JSON.parse(row.json);
+    const name = (data.displayProperties?.name || "").trim();
+    if (!name) continue;
+    if (!name.toLowerCase().includes(lowerQuery)) continue;
+
+    results.push({
+      hash: data.hash,
+      name,
+      description: data.displayProperties?.description || "",
+    });
+  }
+
+  results.sort((a, b) => a.name.localeCompare(b.name));
+  return results;
+}
+
+function getPlugSetPlugItemHashes(plugSetHash: number): number[] {
+  const cached = plugSetCache.get(plugSetHash);
+  if (cached) return cached;
+
+  const database = getDb();
+  const row = database
+    .query("SELECT json FROM DestinyPlugSetDefinition WHERE id = ?")
+    .get(toSignedHash(plugSetHash)) as ManifestJsonRow | null;
+
+  if (!row) {
+    plugSetCache.set(plugSetHash, []);
+    return [];
+  }
+
+  const data = JSON.parse(row.json);
+  const reusablePlugItems = (data.reusablePlugItems ?? []) as Array<{
+    plugItemHash?: number;
+  }>;
+
+  const plugItemHashes = reusablePlugItems
+    .map((entry) => entry.plugItemHash)
+    .filter((hash): hash is number => typeof hash === "number" && hash > 0);
+
+  plugSetCache.set(plugSetHash, plugItemHashes);
+  return plugItemHashes;
+}
+
+function getPlugPerkHashes(plugItemHash: number): number[] {
+  const cached = plugPerkCache.get(plugItemHash);
+  if (cached) return cached;
+
+  const database = getDb();
+  const row = database
+    .query("SELECT json FROM DestinyInventoryItemDefinition WHERE id = ?")
+    .get(toSignedHash(plugItemHash)) as ManifestJsonRow | null;
+
+  if (!row) {
+    plugPerkCache.set(plugItemHash, []);
+    return [];
+  }
+
+  const data = JSON.parse(row.json);
+  const perks = (data.perks ?? []) as Array<{ perkHash?: number }>;
+
+  const perkHashes = perks
+    .map((perk) => perk.perkHash)
+    .filter((hash): hash is number => typeof hash === "number" && hash > 0);
+
+  plugPerkCache.set(plugItemHash, perkHashes);
+  return perkHashes;
+}
+
+export function findWeaponsByPerkGroups(
+  perkGroups: number[][],
+  archetypeQuery?: string
+): WeaponPerkPool[] {
+  if (perkGroups.length === 0) return [];
+
+  const database = getDb();
+  const rows = database
+    .query("SELECT json FROM DestinyInventoryItemDefinition")
+    .all() as ManifestJsonRow[];
+
+  const archetypeLower = archetypeQuery?.toLowerCase().trim();
+  const results: WeaponPerkPool[] = [];
+
+  for (const row of rows) {
+    const data = JSON.parse(row.json);
+    if (data.itemType !== 3) continue;
+
+    const name = (data.displayProperties?.name || "").trim();
+    if (!name) continue;
+
+    const archetype = (
+      data.itemTypeDisplayName ||
+      data.itemTypeAndTierDisplayName ||
+      "Unknown"
+    ).trim();
+
+    if (archetypeLower && !archetype.toLowerCase().includes(archetypeLower)) {
+      continue;
+    }
+
+    const socketEntries = (data.sockets?.socketEntries ?? []) as SocketEntry[];
+    if (socketEntries.length === 0) continue;
+
+    const weaponPerks = new Set<number>();
+    for (const socketEntry of socketEntries) {
+      const plugSetHashes = [
+        socketEntry.randomizedPlugSetHash,
+        socketEntry.reusablePlugSetHash,
+      ];
+
+      for (const plugSetHash of plugSetHashes) {
+        if (typeof plugSetHash !== "number" || plugSetHash <= 0) continue;
+        const plugItemHashes = getPlugSetPlugItemHashes(plugSetHash);
+        for (const plugItemHash of plugItemHashes) {
+          for (const perkHash of getPlugPerkHashes(plugItemHash)) {
+            weaponPerks.add(perkHash);
+          }
+        }
+      }
+    }
+
+    if (weaponPerks.size === 0) continue;
+
+    const matchesAllGroups = perkGroups.every((group) =>
+      group.some((hash) => weaponPerks.has(hash))
+    );
+    if (!matchesAllGroups) continue;
+
+    results.push({
+      hash: data.hash,
+      name,
+      archetype,
+      tierTypeName: data.inventory?.tierTypeName || "Common",
+      perkHashes: Array.from(weaponPerks),
+    });
+  }
+
+  results.sort((a, b) => a.name.localeCompare(b.name));
+  return results;
+}
+
 export function closeDb() {
   if (db) {
     db.close();
     db = null;
   }
+  plugSetCache = new Map<number, number[]>();
+  plugPerkCache = new Map<number, number[]>();
 }

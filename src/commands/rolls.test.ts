@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, mock } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { Command } from "commander";
 
 function makeProfile() {
@@ -104,8 +104,8 @@ function makeIndex() {
   };
 }
 
-async function runRolls(
-  registerRollsCommand: (program: Command) => void,
+async function runCommand(
+  register: (program: Command) => void,
   args: string[]
 ): Promise<{ logs: string[]; errors: string[]; exitCode: number | null }> {
   const logs: string[] = [];
@@ -118,39 +118,49 @@ async function runRolls(
 
   console.log = (...v: unknown[]) => logs.push(v.map(String).join(" "));
   console.error = (...v: unknown[]) => errors.push(v.map(String).join(" "));
-  (process as any).exit = (code: number) => {
+  (process as unknown as { exit: (code: number) => never }).exit = (
+    code: number
+  ) => {
     exitCode = code;
     throw new Error(`__exit_${code}__`);
   };
 
   try {
     const program = new Command();
-    registerRollsCommand(program);
-    await program.parseAsync(["node", "destiny", "rolls", ...args]);
-  } catch (err: any) {
-    if (!err?.message?.startsWith("__exit_")) {
-      // Ignore process.exit simulation error.
+    program.exitOverride();
+    register(program);
+    await program.parseAsync(["node", "destiny", ...args]);
+  } catch (err: unknown) {
+    const known = err as { message?: string; code?: string };
+    if (!known.message?.startsWith("__exit_")) {
+      if (
+        known.code !== "commander.helpDisplayed" &&
+        known.code !== "commander.unknownOption"
+      ) {
+        // swallow test harness errors
+      }
     }
   } finally {
     console.log = origLog;
     console.error = origError;
-    (process as any).exit = origExit;
+    (process as unknown as { exit: typeof process.exit }).exit = origExit;
   }
 
   return { logs, errors, exitCode };
 }
 
 describe("rolls appraise command", () => {
-  afterEach(() => {
-    mock.restore();
-  });
+  afterEach(() => mock.restore());
 
   test("unknown character exits with error", async () => {
     const gradeItemMock = mock(() => "unknown");
 
     mock.module("../services/manifest-cache.ts", () => ({
       ensureManifest: mock(async () => {}),
-      lookupPerk: mock(() => ({ name: "Perk" })),
+      searchPerks: mock(() => []),
+      findWeaponsByPerkGroups: mock(() => []),
+      lookupItem: mock(() => null),
+      lookupPerk: mock(() => ({ hash: 1, name: "Perk", description: "" })),
     }));
     mock.module("../api/profile.ts", () => ({
       getProfile: mock(async () => makeProfile()),
@@ -159,23 +169,40 @@ describe("rolls appraise command", () => {
       buildInventoryIndex: mock(() => makeIndex()),
       getRequiredComponents: () => [200, 201, 205, 102, 300],
     }));
-    mock.module("../services/wishlist.ts", () => ({
-      loadWishlist: mock(async () => ({
-        title: "Test WL",
-        entries: [],
-        byItemHash: new Map(),
+    mock.module("../services/roll-source.ts", () => ({
+      setRollSourceAndRefresh: mock(async () => {
+        throw new Error("not used");
+      }),
+      refreshRollSourceWithFallback: mock(async () => {
+        throw new Error("not used");
+      }),
+      loadWishlistForAppraise: mock(async () => ({
+        wishlist: {
+          title: "Test WL",
+          entries: [],
+          byItemHash: new Map(),
+        },
+        sourceLabel: "/tmp/wishlist.txt",
+        usedCache: false,
+        cacheUpdatedAt: null,
       })),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      getRollSource: mock(() => null),
+    }));
+    mock.module("../services/wishlist.ts", () => ({
       gradeItem: gradeItemMock,
     }));
     mock.module("../ui/spinner.ts", () => ({
-      withSpinner: mock(async (_text: string, fn: () => Promise<unknown>) => fn()),
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
     }));
 
     const { registerRollsCommand } = await import(
-      `./rolls.ts?test=${Date.now()}-${Math.random()}`
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
     );
 
-    const result = await runRolls(registerRollsCommand, [
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
       "appraise",
       "--source",
       "/tmp/wishlist.txt",
@@ -191,13 +218,19 @@ describe("rolls appraise command", () => {
   });
 
   test("--json outputs graded weapon rows", async () => {
-    const loadWishlistMock = mock(async (_source: string) => ({
-      title: "Test Wishlist",
-      entries: [{ itemHash: 1001, perkHashes: [11], notes: "keep for pvp" }],
-      byItemHash: new Map([
-        [1001, [{ itemHash: 1001, perkHashes: [11], notes: "keep for pvp" }]],
-      ]),
+    const loadWishlistForAppraiseMock = mock(async (_source?: string) => ({
+      wishlist: {
+        title: "Test Wishlist",
+        entries: [{ itemHash: 1001, perkHashes: [11], notes: "keep for pvp" }],
+        byItemHash: new Map([
+          [1001, [{ itemHash: 1001, perkHashes: [11], notes: "keep for pvp" }]],
+        ]),
+      },
+      sourceLabel: "/tmp/wishlist.txt",
+      usedCache: false,
+      cacheUpdatedAt: null,
     }));
+
     const gradeItemMock = mock((hash: number) => {
       if (hash === 1001) return "god";
       if (hash === 1002) return "trash";
@@ -206,8 +239,13 @@ describe("rolls appraise command", () => {
 
     mock.module("../services/manifest-cache.ts", () => ({
       ensureManifest: mock(async () => {}),
+      searchPerks: mock(() => []),
+      findWeaponsByPerkGroups: mock(() => []),
+      lookupItem: mock(() => null),
       lookupPerk: (perkHash: number) => ({
+        hash: perkHash,
         name: perkHash === 11 ? "Outlaw" : perkHash === 22 ? "Kill Clip" : "Unknown Perk",
+        description: "",
       }),
     }));
     mock.module("../api/profile.ts", () => ({
@@ -217,29 +255,42 @@ describe("rolls appraise command", () => {
       buildInventoryIndex: mock(() => makeIndex()),
       getRequiredComponents: () => [200, 201, 205, 102, 300],
     }));
+    mock.module("../services/roll-source.ts", () => ({
+      setRollSourceAndRefresh: mock(async () => {
+        throw new Error("not used");
+      }),
+      refreshRollSourceWithFallback: mock(async () => {
+        throw new Error("not used");
+      }),
+      loadWishlistForAppraise: loadWishlistForAppraiseMock,
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      getRollSource: mock(() => null),
+    }));
     mock.module("../services/wishlist.ts", () => ({
-      loadWishlist: loadWishlistMock,
       gradeItem: gradeItemMock,
     }));
     mock.module("../ui/spinner.ts", () => ({
-      withSpinner: mock(async (_text: string, fn: () => Promise<unknown>) => fn()),
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
     }));
 
     const { registerRollsCommand } = await import(
-      `./rolls.ts?test=${Date.now()}-${Math.random()}`
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
     );
 
-    const result = await runRolls(registerRollsCommand, [
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
       "appraise",
       "--source",
       "/tmp/wishlist.txt",
       "--json",
     ]);
 
-    expect(loadWishlistMock).toHaveBeenCalledWith("/tmp/wishlist.txt");
+    expect(loadWishlistForAppraiseMock).toHaveBeenCalledWith("/tmp/wishlist.txt");
     expect(gradeItemMock).toHaveBeenCalledTimes(2); // only weapons
 
-    const output = JSON.parse(result.logs[result.logs.length - 1]!);
+    expect(result.logs).toHaveLength(1);
+    const output = JSON.parse(result.logs[0]!);
     expect(output).toHaveLength(2);
     expect(output[0]).toMatchObject({
       name: "Ace of Spades",
@@ -248,5 +299,488 @@ describe("rolls appraise command", () => {
     expect(output[0].matchedPerks).toContain("Outlaw");
     expect(output[0].notes).toContain("keep for pvp");
     expect(result.exitCode).toBeNull();
+  });
+});
+
+describe("rolls find", () => {
+  afterEach(() => mock.restore());
+
+  test("resolves requested perks and prints matching weapons as JSON", async () => {
+    const ensureManifestMock = mock(async () => {});
+    const searchPerksMock = mock((query: string) => {
+      if (query === "outlaw") {
+        return [{ hash: 9001, name: "Outlaw", description: "" }];
+      }
+      if (query === "rampage") {
+        return [{ hash: 9002, name: "Rampage", description: "" }];
+      }
+      return [];
+    });
+    const findWeaponsByPerkGroupsMock = mock(() => [
+      {
+        hash: 100,
+        name: "Palindrome",
+        archetype: "Hand Cannon",
+        tierTypeName: "Legendary",
+        perkHashes: [9001, 9002],
+      },
+    ]);
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: ensureManifestMock,
+      searchPerks: searchPerksMock,
+      findWeaponsByPerkGroups: findWeaponsByPerkGroupsMock,
+      lookupItem: mock(() => null),
+      lookupPerk: (hash: number) => {
+        if (hash === 9001) {
+          return { hash, name: "Outlaw", description: "" };
+        }
+        if (hash === 9002) {
+          return { hash, name: "Rampage", description: "" };
+        }
+        return null;
+      },
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "find",
+      "--perk",
+      "outlaw",
+      "--perk",
+      "rampage",
+      "--archetype",
+      "hand",
+      "--json",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(ensureManifestMock).toHaveBeenCalledTimes(1);
+    expect(searchPerksMock).toHaveBeenCalledTimes(2);
+    expect(findWeaponsByPerkGroupsMock).toHaveBeenCalledWith(
+      [[9001], [9002]],
+      "hand"
+    );
+
+    expect(result.logs).toHaveLength(1);
+    const payload = JSON.parse(result.logs[0]!);
+    expect(payload).toEqual([
+      {
+        hash: 100,
+        name: "Palindrome",
+        archetype: "Hand Cannon",
+        tier: "Legendary",
+        matchedPerks: ["Outlaw", "Rampage"],
+      },
+    ]);
+  });
+
+  test("exits with error when a requested perk is not found", async () => {
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: mock(async () => {}),
+      searchPerks: mock(() => []),
+      findWeaponsByPerkGroups: mock(() => []),
+      lookupItem: mock(() => null),
+      lookupPerk: mock(() => null),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "find",
+      "--perk",
+      "does-not-exist",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.errors.some((line) => line.includes("not found"))).toBe(true);
+  });
+
+  test("prefers exact perk matches while keeping partial matches as perk alternatives", async () => {
+    const ensureManifestMock = mock(async () => {});
+    const searchPerksMock = mock((query: string) => {
+      if (query === "outlaw") {
+        return [
+          { hash: 9001, name: "Outlaw", description: "" },
+          { hash: 9003, name: "Outlaw's Tempo", description: "" },
+        ];
+      }
+      if (query === "payload") {
+        return [
+          { hash: 9101, name: "Explosive Payload", description: "" },
+          { hash: 9102, name: "Timed Payload", description: "" },
+        ];
+      }
+      return [];
+    });
+    const findWeaponsByPerkGroupsMock = mock(() => [
+      {
+        hash: 200,
+        name: "Fatebringer",
+        archetype: "Hand Cannon",
+        tierTypeName: "Legendary",
+        perkHashes: [9001, 9102],
+      },
+    ]);
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: ensureManifestMock,
+      searchPerks: searchPerksMock,
+      findWeaponsByPerkGroups: findWeaponsByPerkGroupsMock,
+      lookupItem: mock(() => null),
+      lookupPerk: (hash: number) => {
+        if (hash === 9001) {
+          return { hash, name: "Outlaw", description: "" };
+        }
+        if (hash === 9102) {
+          return { hash, name: "Timed Payload", description: "" };
+        }
+        return null;
+      },
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "find",
+      "--perk",
+      "outlaw",
+      "--perk",
+      "payload",
+      "--json",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(ensureManifestMock).toHaveBeenCalledTimes(1);
+    expect(searchPerksMock).toHaveBeenNthCalledWith(1, "outlaw");
+    expect(searchPerksMock).toHaveBeenNthCalledWith(2, "payload");
+    expect(findWeaponsByPerkGroupsMock).toHaveBeenCalledWith(
+      [[9001], [9101, 9102]],
+      undefined
+    );
+
+    expect(result.logs).toHaveLength(1);
+    const payload = JSON.parse(result.logs[0]!);
+    expect(payload).toEqual([
+      {
+        hash: 200,
+        name: "Fatebringer",
+        archetype: "Hand Cannon",
+        tier: "Legendary",
+        matchedPerks: ["Outlaw", "Timed Payload"],
+      },
+    ]);
+  });
+
+  test("prints the empty-state message when no weapons match", async () => {
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: mock(async () => {}),
+      searchPerks: mock(() => [{ hash: 9001, name: "Outlaw", description: "" }]),
+      findWeaponsByPerkGroups: mock(() => []),
+      lookupItem: mock(() => null),
+      lookupPerk: mock(() => null),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "find",
+      "--perk",
+      "outlaw",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(
+      result.logs.some((line) =>
+        line.includes("No weapons found for this perk combination.")
+      )
+    ).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+});
+
+describe("rolls source", () => {
+  afterEach(() => mock.restore());
+
+  test("set stores source and reports cached entry count", async () => {
+    const setRollSourceAndRefreshMock = mock(async () => ({
+      state: {
+        sourceInput: "voltron",
+        sourceResolved:
+          "https://raw.githubusercontent.com/48klocs/dim-wish-list-sources/master/voltron.txt",
+        sourceKind: "url" as const,
+        sourceUpdatedAt: 1700000000,
+        cacheText: "title:Wishlist",
+        cacheUpdatedAt: 1700000100,
+      },
+      wishlist: {
+        title: "Wishlist",
+        entries: [{ itemHash: 1, perkHashes: [2], notes: "" }],
+        byItemHash: new Map([[1, [{ itemHash: 1, perkHashes: [2], notes: "" }]]]),
+      },
+    }));
+
+    mock.module("../services/roll-source.ts", () => ({
+      setRollSourceAndRefresh: setRollSourceAndRefreshMock,
+      refreshRollSourceWithFallback: mock(async () => {
+        throw new Error("not used");
+      }),
+      loadWishlistForAppraise: mock(async () => {
+        throw new Error("not used");
+      }),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      getRollSource: mock(() => null),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "source",
+      "set",
+      "voltron",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(setRollSourceAndRefreshMock).toHaveBeenCalledWith("voltron");
+    expect(result.logs.some((line) => line.includes("Roll source set to"))).toBe(
+      true
+    );
+    expect(result.logs.some((line) => line.includes("Cached 1 entries"))).toBe(
+      true
+    );
+  });
+
+  test("show prints configured source state", async () => {
+    mock.module("../services/roll-source.ts", () => ({
+      setRollSourceAndRefresh: mock(async () => {
+        throw new Error("not used");
+      }),
+      refreshRollSourceWithFallback: mock(async () => {
+        throw new Error("not used");
+      }),
+      loadWishlistForAppraise: mock(async () => {
+        throw new Error("not used");
+      }),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      getRollSource: mock(() => ({
+        sourceInput: "voltron",
+        sourceResolved:
+          "https://raw.githubusercontent.com/48klocs/dim-wish-list-sources/master/voltron.txt",
+        sourceKind: "url" as const,
+        sourceUpdatedAt: 1700000000,
+        cacheText: "title:Wishlist",
+        cacheUpdatedAt: 1700000100,
+      })),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "source",
+      "show",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(result.logs.some((line) => line.includes("Source: voltron"))).toBe(
+      true
+    );
+    expect(result.logs.some((line) => line.includes("Cache:"))).toBe(true);
+  });
+
+  test("refresh falls back to cached wishlist when refresh fails", async () => {
+    mock.module("../services/roll-source.ts", () => ({
+      setRollSourceAndRefresh: mock(async () => {
+        throw new Error("not used");
+      }),
+      refreshRollSourceWithFallback: mock(async () => ({
+        state: {
+          sourceInput: "voltron",
+          sourceResolved:
+            "https://raw.githubusercontent.com/48klocs/dim-wish-list-sources/master/voltron.txt",
+          sourceKind: "url" as const,
+          sourceUpdatedAt: 1700000000,
+          cacheText: "title:Wishlist",
+          cacheUpdatedAt: 1700000100,
+        },
+        wishlist: {
+          title: "Wishlist",
+          entries: [{ itemHash: 1, perkHashes: [2], notes: "" }],
+          byItemHash: new Map([
+            [1, [{ itemHash: 1, perkHashes: [2], notes: "" }]],
+          ]),
+        },
+        usedCache: true,
+        refreshError: "network down",
+      })),
+      loadWishlistForAppraise: mock(async () => {
+        throw new Error("not used");
+      }),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      getRollSource: mock(() => null),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "source",
+      "refresh",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(
+      result.logs.some((line) => line.includes("Using cached wishlist"))
+    ).toBe(true);
+  });
+
+  test("show prints setup hint when no source is configured", async () => {
+    mock.module("../services/roll-source.ts", () => ({
+      setRollSourceAndRefresh: mock(async () => {
+        throw new Error("not used");
+      }),
+      refreshRollSourceWithFallback: mock(async () => {
+        throw new Error("not used");
+      }),
+      loadWishlistForAppraise: mock(async () => {
+        throw new Error("not used");
+      }),
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      getRollSource: mock(() => null),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "source",
+      "show",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(
+      result.logs.some((line) => line.includes("No roll source configured"))
+    ).toBe(true);
+  });
+});
+
+describe("rolls appraise source resolution", () => {
+  afterEach(() => mock.restore());
+
+  test("uses configured source when --source is omitted and warns on cache fallback", async () => {
+    const loadWishlistForAppraiseMock = mock(async () => ({
+      wishlist: {
+        title: "Cached Wishlist",
+        entries: [{ itemHash: 1, perkHashes: [2], notes: "" }],
+        byItemHash: new Map([[1, [{ itemHash: 1, perkHashes: [2], notes: "" }]]]),
+      },
+      sourceLabel: "voltron",
+      usedCache: true,
+      cacheUpdatedAt: 1700000100,
+      refreshError: "offline",
+    }));
+
+    mock.module("../services/manifest-cache.ts", () => ({
+      ensureManifest: mock(async () => {}),
+      searchPerks: mock(() => []),
+      findWeaponsByPerkGroups: mock(() => []),
+      lookupItem: mock(() => null),
+      lookupPerk: mock(() => null),
+    }));
+    mock.module("../services/item-index.ts", () => ({
+      buildInventoryIndex: mock(() => ({
+        all: [],
+        byCharacter: new Map(),
+      })),
+      getRequiredComponents: mock(() => [200, 201, 205, 102, 300]),
+    }));
+    mock.module("../api/profile.ts", () => ({
+      getProfile: mock(async () => ({
+        characters: { data: {} },
+      })),
+    }));
+    mock.module("../services/roll-source.ts", () => ({
+      setRollSourceAndRefresh: mock(async () => {
+        throw new Error("not used");
+      }),
+      refreshRollSourceWithFallback: mock(async () => {
+        throw new Error("not used");
+      }),
+      loadWishlistForAppraise: loadWishlistForAppraiseMock,
+    }));
+    mock.module("../services/local-db.ts", () => ({
+      getRollSource: mock(() => null),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerRollsCommand } = await import(
+      `./rolls.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const result = await runCommand(registerRollsCommand, [
+      "rolls",
+      "appraise",
+      "--json",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(loadWishlistForAppraiseMock).toHaveBeenCalledWith(undefined);
+    expect(result.logs).toHaveLength(1);
+    expect(JSON.parse(result.logs[0]!)).toEqual([]);
+    expect(
+      result.errors.some((line) => line.includes("Using cached source"))
+    ).toBe(true);
   });
 });

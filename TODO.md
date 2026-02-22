@@ -1,6 +1,6 @@
 # TODO: DIM Parity Roadmap
 
-Last updated: 2026-02-21
+Last updated: 2026-02-22
 
 ## P0 Foundation ✓ Complete
 
@@ -31,7 +31,7 @@ Last updated: 2026-02-21
 
 ## P2 Buildcraft + Management (4-8 weeks)
 
-- [ ] Implement loadouts v1.
+- [x] Implement loadouts v1.
   - Commands: `destiny loadout create|list|apply|delete|export|import`.
   - Start with item/equip state; add mods/subclass in v2.
 - [ ] Implement Organizer/Compare/CSV workflows.
@@ -42,7 +42,7 @@ Last updated: 2026-02-21
 - [ ] Implement god roll finder query mode.
   - Command: `destiny rolls find --perk "<perk>" --perk "<perk>" [--archetype ...]`.
   - Search manifest pools for weapons that can roll requested perk combinations.
-- [ ] Implement roll source management.
+- [x] Implement roll source management.
   - Commands: `destiny rolls source set <voltron|choosy|url|file>`, `destiny rolls source show`, `destiny rolls source refresh`.
   - Cache sources locally with update timestamps and fallback behavior.
 

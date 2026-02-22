@@ -5,6 +5,8 @@ type Row = { id: number; json: string };
 
 const itemRows: Row[] = [];
 const bucketRows: Row[] = [];
+const perkRows: Row[] = [];
+const plugSetRows: Row[] = [];
 let dbClosed = false;
 
 const fakeManifestDir = "/tmp/d2cli-manifest-test";
@@ -32,15 +34,25 @@ class FakeDatabase {
   query(sql: string) {
     return {
       get: (id: number) => {
-        const rows = sql.includes("DestinyInventoryItemDefinition")
-          ? itemRows
-          : bucketRows;
+        let rows: Row[] = [];
+        if (sql.includes("DestinyInventoryItemDefinition")) {
+          rows = itemRows;
+        } else if (sql.includes("DestinyInventoryBucketDefinition")) {
+          rows = bucketRows;
+        } else if (sql.includes("DestinySandboxPerkDefinition")) {
+          rows = perkRows;
+        } else if (sql.includes("DestinyPlugSetDefinition")) {
+          rows = plugSetRows;
+        }
         const row = rows.find((r) => r.id === id);
         return row ? { json: row.json } : null;
       },
       all: () => {
         if (sql.includes("DestinyInventoryItemDefinition")) {
           return itemRows.map((r) => ({ json: r.json }));
+        }
+        if (sql.includes("DestinySandboxPerkDefinition")) {
+          return perkRows.map((r) => ({ json: r.json }));
         }
         return [];
       },
@@ -58,14 +70,18 @@ mock.module("bun:sqlite", () => ({
 
 const {
   closeDb,
+  findWeaponsByPerkGroups,
   lookupBucket,
   lookupItem,
+  searchPerks,
   searchItems,
 } = await import("../../src/services/manifest-cache.ts");
 
 beforeEach(() => {
   itemRows.length = 0;
   bucketRows.length = 0;
+  perkRows.length = 0;
+  plugSetRows.length = 0;
   dbClosed = false;
   closeDb();
 });
@@ -156,6 +172,254 @@ describe("services/manifest-cache lookup helpers", () => {
     const results = searchItems("ace");
     expect(results.length).toBe(1);
     expect(results[0]?.name).toBe("Ace of Spades");
+  });
+
+  test("searchPerks filters perks by case-insensitive name", () => {
+    perkRows.push(
+      {
+        id: 10,
+        json: JSON.stringify({
+          hash: 10,
+          displayProperties: { name: "Outlaw", description: "Reload speed boost" },
+        }),
+      },
+      {
+        id: 11,
+        json: JSON.stringify({
+          hash: 11,
+          displayProperties: { name: "Rampage", description: "Damage bonus" },
+        }),
+      }
+    );
+
+    const results = searchPerks("out");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.name).toBe("Outlaw");
+  });
+
+  test("findWeaponsByPerkGroups finds weapons that can roll all requested perks", () => {
+    itemRows.push(
+      {
+        id: 100,
+        json: JSON.stringify({
+          hash: 100,
+          itemType: 3,
+          itemTypeDisplayName: "Hand Cannon",
+          displayProperties: { name: "Palindrome", icon: "" },
+          inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
+          sockets: {
+            socketEntries: [{ randomizedPlugSetHash: 500 }],
+          },
+        }),
+      },
+      {
+        id: 101,
+        json: JSON.stringify({
+          hash: 101,
+          itemType: 3,
+          itemTypeDisplayName: "Scout Rifle",
+          displayProperties: { name: "Hung Jury SR4", icon: "" },
+          inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
+          sockets: {
+            socketEntries: [{ randomizedPlugSetHash: 501 }],
+          },
+        }),
+      },
+      {
+        id: 10001,
+        json: JSON.stringify({
+          hash: 10001,
+          displayProperties: { name: "Outlaw", icon: "" },
+          perks: [{ perkHash: 9001 }],
+        }),
+      },
+      {
+        id: 10002,
+        json: JSON.stringify({
+          hash: 10002,
+          displayProperties: { name: "Rampage", icon: "" },
+          perks: [{ perkHash: 9002 }],
+        }),
+      },
+      {
+        id: 10003,
+        json: JSON.stringify({
+          hash: 10003,
+          displayProperties: { name: "Explosive Payload", icon: "" },
+          perks: [{ perkHash: 9003 }],
+        }),
+      }
+    );
+
+    plugSetRows.push(
+      {
+        id: 500,
+        json: JSON.stringify({
+          hash: 500,
+          reusablePlugItems: [
+            { plugItemHash: 10001 },
+            { plugItemHash: 10002 },
+          ],
+        }),
+      },
+      {
+        id: 501,
+        json: JSON.stringify({
+          hash: 501,
+          reusablePlugItems: [{ plugItemHash: 10003 }],
+        }),
+      }
+    );
+
+    const results = findWeaponsByPerkGroups([[9001], [9002]], "hand");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.name).toBe("Palindrome");
+    expect(results[0]?.archetype).toBe("Hand Cannon");
+    expect(results[0]?.perkHashes).toEqual(expect.arrayContaining([9001, 9002]));
+  });
+
+  test("findWeaponsByPerkGroups supports alternative perks in each required group", () => {
+    itemRows.push(
+      {
+        id: 200,
+        json: JSON.stringify({
+          hash: 200,
+          itemType: 3,
+          itemTypeDisplayName: "Auto Rifle",
+          displayProperties: { name: "Prosecutor", icon: "" },
+          inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
+          sockets: {
+            socketEntries: [{ randomizedPlugSetHash: 600 }],
+          },
+        }),
+      },
+      {
+        id: 201,
+        json: JSON.stringify({
+          hash: 201,
+          itemType: 3,
+          itemTypeDisplayName: "Auto Rifle",
+          displayProperties: { name: "Origin Story", icon: "" },
+          inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
+          sockets: {
+            socketEntries: [{ randomizedPlugSetHash: 601 }],
+          },
+        }),
+      },
+      {
+        id: 20001,
+        json: JSON.stringify({
+          hash: 20001,
+          displayProperties: { name: "Perk A2", icon: "" },
+          perks: [{ perkHash: 9102 }],
+        }),
+      },
+      {
+        id: 20002,
+        json: JSON.stringify({
+          hash: 20002,
+          displayProperties: { name: "Perk B1", icon: "" },
+          perks: [{ perkHash: 9201 }],
+        }),
+      },
+      {
+        id: 20003,
+        json: JSON.stringify({
+          hash: 20003,
+          displayProperties: { name: "Perk A1", icon: "" },
+          perks: [{ perkHash: 9101 }],
+        }),
+      }
+    );
+
+    plugSetRows.push(
+      {
+        id: 600,
+        json: JSON.stringify({
+          hash: 600,
+          reusablePlugItems: [
+            { plugItemHash: 20001 },
+            { plugItemHash: 20002 },
+          ],
+        }),
+      },
+      {
+        id: 601,
+        json: JSON.stringify({
+          hash: 601,
+          reusablePlugItems: [{ plugItemHash: 20003 }],
+        }),
+      }
+    );
+
+    const results = findWeaponsByPerkGroups([[9101, 9102], [9201, 9202]]);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.name).toBe("Prosecutor");
+    expect(results[0]?.perkHashes).toEqual(expect.arrayContaining([9102, 9201]));
+  });
+
+  test("findWeaponsByPerkGroups filters archetypes with trim + case-insensitive matching", () => {
+    itemRows.push(
+      {
+        id: 300,
+        json: JSON.stringify({
+          hash: 300,
+          itemType: 3,
+          itemTypeDisplayName: "Hand Cannon",
+          displayProperties: { name: "Palindrome", icon: "" },
+          inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
+          sockets: {
+            socketEntries: [{ randomizedPlugSetHash: 700 }],
+          },
+        }),
+      },
+      {
+        id: 301,
+        json: JSON.stringify({
+          hash: 301,
+          itemType: 3,
+          itemTypeDisplayName: "Pulse Rifle",
+          displayProperties: { name: "The Messenger", icon: "" },
+          inventory: { tierTypeName: "Legendary", bucketTypeHash: 1498876634 },
+          sockets: {
+            socketEntries: [{ randomizedPlugSetHash: 701 }],
+          },
+        }),
+      },
+      {
+        id: 30001,
+        json: JSON.stringify({
+          hash: 30001,
+          displayProperties: { name: "Keep Away", icon: "" },
+          perks: [{ perkHash: 9301 }],
+        }),
+      }
+    );
+
+    plugSetRows.push(
+      {
+        id: 700,
+        json: JSON.stringify({
+          hash: 700,
+          reusablePlugItems: [{ plugItemHash: 30001 }],
+        }),
+      },
+      {
+        id: 701,
+        json: JSON.stringify({
+          hash: 701,
+          reusablePlugItems: [{ plugItemHash: 30001 }],
+        }),
+      }
+    );
+
+    const allResults = findWeaponsByPerkGroups([[9301]]);
+    expect(allResults).toHaveLength(2);
+
+    const filteredResults = findWeaponsByPerkGroups([[9301]], "  HAND  ");
+    expect(filteredResults).toHaveLength(1);
+    expect(filteredResults[0]?.name).toBe("Palindrome");
+    expect(filteredResults[0]?.archetype).toBe("Hand Cannon");
   });
 
   test("closeDb closes current database instance", () => {
