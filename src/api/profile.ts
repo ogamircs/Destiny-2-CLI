@@ -46,6 +46,18 @@ export interface ProfileResponse {
         }
       >;
     };
+    perks?: {
+      data: Record<
+        string,
+        {
+          perks: Array<{
+            perkHash: number;
+            isActive: boolean;
+            isVisible: boolean;
+          }>;
+        }
+      >;
+    };
   };
 }
 

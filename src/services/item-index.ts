@@ -121,6 +121,15 @@ export function buildInventoryIndex(
       perks: undefined,
     };
 
+    if (instanceId && profile.itemComponents?.perks?.data) {
+      const perkData = profile.itemComponents.perks.data[instanceId];
+      if (perkData) {
+        indexed.perks = perkData.perks
+          .filter((p) => p.isVisible)
+          .map((p) => p.perkHash);
+      }
+    }
+
     all.push(indexed);
 
     if (instanceId) {

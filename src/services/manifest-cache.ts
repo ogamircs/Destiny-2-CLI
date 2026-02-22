@@ -30,6 +30,12 @@ export interface ManifestBucket {
   category: number;
 }
 
+export interface ManifestPerk {
+  hash: number;
+  name: string;
+  description: string;
+}
+
 function getDbPath(): string {
   return join(getLocalPaths().manifestDir, "manifest.sqlite3");
 }
@@ -173,6 +179,24 @@ export function lookupBucket(hash: number): ManifestBucket | null {
     hash: data.hash,
     name: data.displayProperties?.name || "Unknown",
     category: data.category || 0,
+  };
+}
+
+export function lookupPerk(hash: number): ManifestPerk | null {
+  const database = getDb();
+  const signedHash = hash > 0x7fffffff ? hash - 0x100000000 : hash;
+
+  const row = database
+    .query("SELECT json FROM DestinySandboxPerkDefinition WHERE id = ?")
+    .get(signedHash) as { json: string } | null;
+
+  if (!row) return null;
+
+  const data = JSON.parse(row.json);
+  return {
+    hash: data.hash,
+    name: data.displayProperties?.name || "Unknown Perk",
+    description: data.displayProperties?.description || "",
   };
 }
 

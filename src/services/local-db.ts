@@ -178,6 +178,20 @@ export function getTags(item: {
   return rows.map((r) => r.tag);
 }
 
+export function getAllTags(): Map<string, string[]> {
+  const db = openLocalDb();
+  const rows = db
+    .query("SELECT item_key, tag FROM item_tags ORDER BY item_key, created_at")
+    .all() as { item_key: string; tag: string }[];
+  const result = new Map<string, string[]>();
+  for (const row of rows) {
+    const existing = result.get(row.item_key) ?? [];
+    existing.push(row.tag);
+    result.set(row.item_key, existing);
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Notes
 // ---------------------------------------------------------------------------

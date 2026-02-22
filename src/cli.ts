@@ -6,6 +6,10 @@ import { registerInventoryCommand } from "./commands/inventory.ts";
 import { registerTransferCommand } from "./commands/transfer.ts";
 import { registerEquipCommand } from "./commands/equip.ts";
 import { registerStatsCommand } from "./commands/stats.ts";
+import { registerTagCommand, registerNoteCommand } from "./commands/tag.ts";
+import { registerSearchCommand } from "./commands/search.ts";
+import { registerRollsCommand } from "./commands/rolls.ts";
+import { registerFarmingCommand } from "./commands/farming.ts";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -28,6 +32,11 @@ export function createProgram(): Command {
   registerTransferCommand(program);
   registerEquipCommand(program);
   registerStatsCommand(program);
+  registerTagCommand(program);
+  registerNoteCommand(program);
+  registerSearchCommand(program);
+  registerRollsCommand(program);
+  registerFarmingCommand(program);
 
   return program;
 }
