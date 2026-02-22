@@ -1,6 +1,6 @@
 # Destiny 2 CLI
 
-A macOS command-line tool for Destiny 2. View your characters, browse inventory, transfer items, and check stats — all from the terminal.
+A macOS command-line tool for Destiny 2. View your characters, browse inventory, transfer items, tag and annotate gear, search with a query language, appraise rolls against wishlists, and check stats — all from the terminal.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ A macOS command-line tool for Destiny 2. View your characters, browse inventory,
 1. Go to [bungie.net/en/Application](https://www.bungie.net/en/Application) and click **Create New App**
 2. Fill in the details:
    - **OAuth Client Type**: Confidential
-   - **Redirect URL**: `http://localhost:3847/callback`
+   - **Redirect URL**: `https://localhost:3847/callback`
    - **Scope**: Read your Destiny 2 inventory and vault (check all read scopes)
 3. After creating the app, copy your **API Key**, **OAuth client_id**, and **OAuth client_secret**
 
@@ -78,19 +78,19 @@ destiny auth logout
 ### Characters
 
 ```bash
-# List all your characters with class, light level, and last played time
+# List all your characters with class, Guardian Rank, and last played time
 destiny characters
 ```
 
 ```
 Characters
-┌─────────┬─────────────────┬───────┬─────────────┬────────────┐
-│ Class   │ Race/Gender     │ Light │ Last Played │ Time Played│
-├─────────┼─────────────────┼───────┼─────────────┼────────────┤
-│ Hunter  │ Awoken Female   │ 1995  │ 2h ago      │ 1842h      │
-│ Titan   │ Human Male      │ 1988  │ 3d ago      │ 412h       │
-│ Warlock │ Exo Female      │ 1975  │ 5d ago      │ 203h       │
-└─────────┴─────────────────┴───────┴─────────────┴────────────┘
+┌─────────┬─────────────┬────────┬─────────────┬─────────────┐
+│ Class   │ Race/Gender │ Rank   │ Last Played │ Time Played │
+├─────────┼─────────────┼────────┼─────────────┼─────────────┤
+│ Hunter  │ Awoken Male │ Rank 7 │ 2h ago      │ 1842h       │
+│ Titan   │ Human Male  │ Rank 7 │ 3d ago      │ 412h        │
+│ Warlock │ Exo Female  │ Rank 7 │ 5d ago      │ 203h        │
+└─────────┴─────────────┴────────┴─────────────┴─────────────┘
 ```
 
 ### Inventory
@@ -144,6 +144,114 @@ destiny equip "Ace of Spades"
 # Equip on a specific character
 destiny equip "Ace of Spades" --character hunter
 ```
+
+### Tags & Notes
+
+Attach persistent tags and free-text notes to any item. These are stored locally and used by the `search` command.
+
+```bash
+# Tag an item
+destiny tag add "Ace of Spades" god-roll
+destiny tag add "Ace of Spades" pvp-main
+
+# List tags on an item
+destiny tag list "Ace of Spades"
+
+# Remove a tag
+destiny tag remove "Ace of Spades" pvp-main
+
+# Attach a note
+destiny note set "Ace of Spades" "save for trials"
+
+# Show the note
+destiny note show "Ace of Spades"
+
+# Clear the note
+destiny note clear "Ace of Spades"
+```
+
+### Search
+
+Search your entire inventory — across all characters and the vault — using a structured query language.
+
+```bash
+# Basic queries
+destiny search "is:exotic"
+destiny search "is:weapon tier:legendary slot:kinetic"
+destiny search "ace"                       # bare text matches item names
+
+# Tag and power filters
+destiny search "tag:god-roll"
+destiny search "is:weapon power:>1800"
+destiny search "is:armor power:>=1810 is:titan"
+
+# Boolean operators
+destiny search "is:exotic or is:legendary"
+destiny search "is:weapon -is:exotic"      # negation with -
+destiny search "not:is:locked is:vault"
+
+# Output and saving
+destiny search "is:exotic" --json
+destiny search "is:weapon tier:exotic" --save exotic-weapons
+destiny search --saved                     # list all saved queries
+```
+
+**Query syntax:**
+
+| Qualifier | Examples | Matches |
+|---|---|---|
+| `is:weapon` / `is:armor` / `is:ghost` / … | `is:weapon` | item type |
+| `is:exotic` / `is:legendary` / `is:rare` / … | `is:legendary` | tier |
+| `is:equipped` / `is:locked` / `is:vault` | `is:equipped` | state |
+| `is:solar` / `is:arc` / `is:void` / `is:strand` / `is:stasis` / `is:kinetic` | `is:solar` | damage type |
+| `is:titan` / `is:hunter` / `is:warlock` | `is:titan` | class restriction |
+| `tag:` | `tag:god-roll` | item has that tag |
+| `slot:` | `slot:kinetic` | gear slot (case-insensitive) |
+| `tier:` | `tier:exotic` | tier name (case-insensitive) |
+| `power:` | `power:>1800`, `power:<=1750`, `power:1810` | power level comparison |
+| `class:` | `class:titan`, `class:any` | class restriction |
+| bare text | `ace` | name substring match |
+
+Space = AND (implicit). `or` = lower-precedence OR. `-` or `not:` prefix = negate.
+
+### Roll Appraisal
+
+Grade your weapons against a DIM-format wishlist.
+
+```bash
+# Appraise all weapons against a local wishlist file
+destiny rolls appraise --source ~/wishlists/pvp.txt
+
+# Pull a wishlist from the web
+destiny rolls appraise --source https://raw.githubusercontent.com/48klocs/dim-wish-list-sources/master/voltron.txt
+
+# Filter to one character's weapons
+destiny rolls appraise --source ~/wishlist.txt --character hunter
+
+# JSON output for scripting
+destiny rolls appraise --source ~/wishlist.txt --json
+```
+
+Grades: **GOD** (all perk column matched), **GOOD** (partial match), **TRASH** (on wishlist but no perks match), **?** (not on wishlist).
+
+Wishlists must be in [DIM format](https://github.com/48klocs/dim-wish-list-sources): `dimwishlist:item=HASH&perks=P1,P2&notes:...`
+
+### Farming Mode
+
+Clear a character's unequipped, unlocked items to the vault in one shot — then restore them when the farming session is done.
+
+```bash
+# Clear Hunter's inventory to vault (saves a recovery loadout first)
+destiny farming start --character hunter
+
+# Check active sessions (no API call)
+destiny farming status
+
+# Restore items back to Hunter
+destiny farming stop --character hunter
+```
+
+The recovery loadout is saved before any items move, so `stop` can restore from partial failures.
 
 ### Stats
 
@@ -207,12 +315,24 @@ src/
 ├── index.ts              # Entry point (.env loader + CLI runner)
 ├── cli.ts                # Commander program + command registration
 ├── commands/             # One file per subcommand
+│   ├── auth.ts           # auth login/logout/status
+│   ├── characters.ts     # characters
+│   ├── inventory.ts      # inventory
+│   ├── transfer.ts       # transfer / move
+│   ├── equip.ts          # equip
+│   ├── stats.ts          # stats
+│   ├── tag.ts            # tag add/remove/list + note set/clear/show
+│   ├── search.ts         # search DSL
+│   ├── rolls.ts          # rolls appraise
+│   └── farming.ts        # farming start/stop/status
 ├── api/                  # Thin fetch wrappers for Bungie API endpoints
 ├── services/             # Core services (see below)
 │   ├── item-index.ts     # Merges profile + manifest + instance data into a flat index
 │   ├── local-db.ts       # Persistent SQLite for tags, notes, loadouts, saved searches
 │   ├── move-planner.ts   # Validates and plans item transfers before touching the API
-│   ├── manifest-cache.ts # Manifest download, cache, and item lookups
+│   ├── search.ts         # Query DSL parser
+│   ├── wishlist.ts       # DIM wishlist parser + roll grader
+│   ├── manifest-cache.ts # Manifest download, cache, and item/perk lookups
 │   ├── token-store.ts    # Obfuscated token persistence
 │   ├── auth-service.ts   # OAuth login flow
 │   └── config.ts         # Path and config resolution
@@ -224,7 +344,7 @@ src/
 
 ## Services Reference
 
-The three core services below are the foundation layer that all higher-level features build on. They can be imported directly for scripting or extension.
+The core services below are the foundation layer that all higher-level features build on. They can be imported directly for scripting or extension.
 
 ### `item-index.ts` — Inventory Index
 
@@ -251,10 +371,12 @@ const vaultWeapons = idx.vaultItems.filter(i => i.itemType === 3);
 // item.isLocked, item.isEquipped, item.nonTransferrable
 // item.location  →  characterId string, or "vault"
 // item.classRestriction  →  -1=any, 0=Titan, 1=Hunter, 2=Warlock
+// item.perks  →  number[] of visible perk hashes (requires ItemPerks component)
 ```
 
-`getRequiredComponents()` returns the exact `DestinyComponentType` flags needed:
-`Characters(200)`, `CharacterInventories(201)`, `CharacterEquipment(205)`, `ProfileInventories(102)`, `ItemInstances(300)`.
+To also fetch perk data (needed for roll appraisal), add `DestinyComponentType.ItemPerks` (302) to the components list.
+
+`getRequiredComponents()` returns the baseline `DestinyComponentType` flags: `Characters(200)`, `CharacterInventories(201)`, `CharacterEquipment(205)`, `ProfileInventories(102)`, `ItemInstances(300)`.
 
 ---
 
@@ -265,7 +387,7 @@ A SQLite database at `~/.config/destiny-cli/local.db` for storing per-item annot
 #### Tags
 
 ```ts
-import { addTag, removeTag, getTags } from "./src/services/local-db.ts";
+import { addTag, removeTag, getTags, getAllTags } from "./src/services/local-db.ts";
 
 const item = { instanceId: "6917530110795528798", hash: 12345 };
 
@@ -274,6 +396,9 @@ addTag(item, "infuse");
 getTags(item);              // → ["infuse", "junk"]
 removeTag(item, "junk");
 getTags(item);              // → ["infuse"]
+
+// Bulk fetch all tags (used by search to avoid N round-trips)
+getAllTags();  // → Map<itemKey, string[]>
 ```
 
 #### Notes
@@ -396,6 +521,51 @@ Validation errors (checked in order):
 2. `item.isLocked` — locked in-game
 3. `item.isEquipped` — must unequip first
 4. Already at the destination (vault or same character)
+
+---
+
+### `search.ts` — Query DSL Parser
+
+Parses a search query string into a predicate function. Pure — no API calls, no I/O.
+
+```ts
+import { parseQuery } from "./src/services/search.ts";
+import { getAllTags, itemKey } from "./src/services/local-db.ts";
+
+const predicate = parseQuery("is:exotic slot:kinetic -is:vault");
+const allTags = getAllTags();
+
+const matches = index.all.filter(item =>
+  predicate(item, allTags.get(itemKey(item)) ?? [])
+);
+```
+
+---
+
+### `wishlist.ts` — Wishlist Parser & Roll Grader
+
+Parses DIM-format wishlists and grades weapon rolls.
+
+```ts
+import { parseWishlist, loadWishlist, gradeItem } from "./src/services/wishlist.ts";
+
+// Parse from a string
+const wl = parseWishlist(fileText);
+
+// Load from a file path or HTTPS URL
+const wl = await loadWishlist("~/wishlists/pvp.txt");
+const wl = await loadWishlist("https://example.com/wishlist.txt");
+
+// Grade a weapon
+const grade = gradeItem(item.hash, item.perks, wl);
+// → "god" | "good" | "trash" | "unknown"
+```
+
+Grading rules:
+- **god** — all perk hashes of any wishlist entry are present on the item (or the entry has no required perks)
+- **good** — at least one perk hash from any entry matches
+- **trash** — item is on the wishlist but no perks match
+- **unknown** — item hash not in the wishlist at all
 
 ---
 
