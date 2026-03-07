@@ -634,4 +634,6 @@ Grading rules:
 
 ---
 
-If you enjoy this, [buy me some tokens](https://buymeacoffee.com/amircs).
+## Support
+
+☕️ ❤️ If you enjoy this, [buy me some tokens](https://buymeacoffee.com/amircs).
