@@ -24,6 +24,10 @@ function makeProfile() {
   };
 }
 
+function makeCharacters() {
+  return Object.values(makeProfile().characters.data);
+}
+
 function makeIndex() {
   return {
     all: [
@@ -61,6 +65,86 @@ function makeIndex() {
   };
 }
 
+function makeSharedContext() {
+  const characters = makeCharacters();
+  return {
+    characters,
+    byCharacterId: new Map(
+      characters.map((character) => [character.characterId, character])
+    ),
+    index: makeIndex(),
+  };
+}
+
+function defaultResolveCharacter(
+  characters: ReturnType<typeof makeCharacters>,
+  query: string
+) {
+  const lower = query.toLowerCase();
+  const character = characters.find((candidate) => {
+    if (candidate.classType === 0) return lower === "titan";
+    if (candidate.classType === 1) return lower === "hunter";
+    if (candidate.classType === 2) return lower === "warlock";
+    return false;
+  });
+
+  if (!character) {
+    throw new Error(
+      `Character "${query}" not found. Available: ${characters
+        .map((candidate) => {
+          if (candidate.classType === 0) return "titan";
+          if (candidate.classType === 1) return "hunter";
+          if (candidate.classType === 2) return "warlock";
+          return "unknown";
+        })
+        .join(", ")}`
+    );
+  }
+
+  return character;
+}
+
+function wrapCommandAction<TArgs extends unknown[]>(
+  action: (...args: TArgs) => Promise<void>
+): (...args: TArgs) => Promise<void> {
+  return async (...args: TArgs) => {
+    try {
+      await action(...args);
+    } catch (err) {
+      console.error(err instanceof Error ? `✗ ${err.message}` : `✗ ${String(err)}`);
+      process.exit(1);
+    }
+  };
+}
+
+function mockSharedModule(options?: {
+  loadInventoryContext?: () => Promise<ReturnType<typeof makeSharedContext>>;
+  resolveCharacter?: (
+    characters: ReturnType<typeof makeCharacters>,
+    query: string
+  ) => ReturnType<typeof makeCharacters>[number];
+}) {
+  const loadInventoryContextMock = mock(
+    options?.loadInventoryContext ?? (async () => makeSharedContext())
+  );
+  const resolveCharacterMock = mock(
+    options?.resolveCharacter ??
+      ((characters: ReturnType<typeof makeCharacters>, query: string) =>
+        defaultResolveCharacter(characters, query))
+  );
+
+  mock.module("./shared.ts", () => ({
+    loadInventoryContext: loadInventoryContextMock,
+    resolveCharacter: resolveCharacterMock,
+    runCommandAction: wrapCommandAction,
+  }));
+
+  return {
+    loadInventoryContextMock,
+    resolveCharacterMock,
+  };
+}
+
 async function runCommand(
   register: (program: Command) => void,
   args: string[]
@@ -94,7 +178,6 @@ async function runCommand(
         known.code !== "commander.helpDisplayed" &&
         known.code !== "commander.unknownOption"
       ) {
-        // swallow test harness errors
       }
     }
   } finally {
@@ -155,16 +238,7 @@ describe("optimizer analyze", () => {
       ],
     }));
 
-    mock.module("../services/manifest-cache.ts", () => ({
-      ensureManifest: mock(async () => {}),
-    }));
-    mock.module("../api/profile.ts", () => ({
-      getProfile: mock(async () => makeProfile()),
-    }));
-    mock.module("../services/item-index.ts", () => ({
-      buildInventoryIndex: mock(() => makeIndex()),
-      getRequiredComponents: () => [200, 201, 205, 102, 300],
-    }));
+    const { loadInventoryContextMock } = mockSharedModule();
     mock.module("../services/roll-source.ts", () => ({
       loadWishlistForAppraise: loadWishlistForAppraiseMock,
     }));
@@ -196,6 +270,7 @@ describe("optimizer analyze", () => {
     ]);
 
     expect(result.exitCode).toBeNull();
+    expect(loadInventoryContextMock).toHaveBeenCalledTimes(1);
     expect(loadWishlistForAppraiseMock).toHaveBeenCalledWith("voltron");
     expect(loadPopularitySourceMock).toHaveBeenCalledWith("/tmp/popularity.json");
     expect(analyzeLoadoutMock).toHaveBeenCalledTimes(1);
@@ -206,17 +281,92 @@ describe("optimizer analyze", () => {
     expect(analysisPayload.recommendations[0].slot).toBe("Kinetic");
   });
 
+  test("loads inventory context and wishlist concurrently", async () => {
+    const started: string[] = [];
+    let resolveInventory: ((value: ReturnType<typeof makeSharedContext>) => void) | null = null;
+    let resolveWishlist: ((value: {
+      wishlist: { title: string; entries: unknown[]; byItemHash: Map<unknown, unknown> };
+      sourceLabel: string;
+      usedCache: boolean;
+      cacheUpdatedAt: null;
+    }) => void) | null = null;
+
+    const inventoryPromise = new Promise<ReturnType<typeof makeSharedContext>>((resolve) => {
+      resolveInventory = resolve;
+    });
+    const wishlistPromise = new Promise<{
+      wishlist: { title: string; entries: unknown[]; byItemHash: Map<unknown, unknown> };
+      sourceLabel: string;
+      usedCache: boolean;
+      cacheUpdatedAt: null;
+    }>((resolve) => {
+      resolveWishlist = resolve;
+    });
+
+    mockSharedModule({
+      loadInventoryContext: async () => {
+        started.push("inventory");
+        return inventoryPromise;
+      },
+    });
+    mock.module("../services/roll-source.ts", () => ({
+      loadWishlistForAppraise: mock(async () => {
+        started.push("wishlist");
+        return wishlistPromise;
+      }),
+    }));
+    mock.module("../services/popularity.ts", () => ({
+      loadPopularitySource: mock(async () => ({
+        sourceLabel: "none",
+        scores: new Map(),
+      })),
+    }));
+    mock.module("../services/optimizer.ts", () => ({
+      analyzeLoadout: mock(() => ({
+        character: { id: "char-hunter", classType: 1 },
+        summary: { totalSlots: 0, improvedSlots: 0 },
+        recommendations: [],
+      })),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+
+    const { registerOptimizerCommand } = await import(
+      `./optimizer.ts?t=${Date.now()}-${Math.random()}`
+    );
+
+    const runPromise = runCommand(registerOptimizerCommand, [
+      "optimizer",
+      "analyze",
+      "--character",
+      "hunter",
+      "--source",
+      "voltron",
+      "--json",
+    ]);
+
+    await Promise.resolve();
+    expect(started).toEqual(["inventory", "wishlist"]);
+
+    resolveInventory?.(makeSharedContext());
+    resolveWishlist?.({
+      wishlist: { title: "Wishlist", entries: [], byItemHash: new Map() },
+      sourceLabel: "voltron",
+      usedCache: false,
+      cacheUpdatedAt: null,
+    });
+
+    const result = await runPromise;
+    expect(result.exitCode).toBeNull();
+  });
+
   test("unknown character exits with error", async () => {
-    mock.module("../services/manifest-cache.ts", () => ({
-      ensureManifest: mock(async () => {}),
-    }));
-    mock.module("../api/profile.ts", () => ({
-      getProfile: mock(async () => makeProfile()),
-    }));
-    mock.module("../services/item-index.ts", () => ({
-      buildInventoryIndex: mock(() => makeIndex()),
-      getRequiredComponents: () => [200, 201, 205, 102, 300],
-    }));
+    mockSharedModule({
+      resolveCharacter: () => {
+        throw new Error('Character "warlock" not found. Available: hunter');
+      },
+    });
     mock.module("../services/roll-source.ts", () => ({
       loadWishlistForAppraise: mock(async () => ({
         wishlist: { title: "Wishlist", entries: [], byItemHash: new Map() },

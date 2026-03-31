@@ -1,6 +1,6 @@
 # TODO: DIM Parity Roadmap
 
-Last updated: 2026-02-22
+Last updated: 2026-03-08
 
 ## P0 Foundation ✓ Complete
 
@@ -58,3 +58,23 @@ Last updated: 2026-02-22
 
 - [x] Desktop/mobile packaging features.
 - [x] Stream Deck integrations.
+
+## Simplification Pass (2026-03-08)
+
+Goal: reduce command-layer duplication without changing CLI behavior.
+
+- [x] Add shared CLI command/runtime helpers.
+  - Centralize `try/catch` + formatted error exit behavior.
+- [x] Add shared inventory-loading helpers.
+  - Reuse manifest/profile/index loading across commands.
+- [x] Centralize character, item, and location resolution.
+  - Reuse class lookup, item selection, and location labels.
+- [x] Adopt helpers in smaller commands first.
+  - Completed for `tag`, `organize`, `compare`, `optimizer`, `inventory`, `transfer`, and `equip`.
+- [x] Review the touched simplification area with the local `simplify` skill.
+  - Restored `optimizer`'s concurrent inventory + wishlist loading.
+  - Simplified `src/commands/optimizer.test.ts` to target the new shared seam directly.
+- [ ] Extend helper adoption to remaining command-heavy files.
+  - Next candidates: `loadout` and `rolls`.
+- [ ] Split `src/services/local-db.ts` behind a compatibility shim.
+  - Deferred for now: command tests still mock `../services/local-db.ts` directly, so this wants a separate pass with tight compatibility coverage.
