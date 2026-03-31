@@ -631,3 +631,9 @@ Grading rules:
 - **Local database** (tags, notes, loadouts, saved searches, roll source cache) is stored at `~/.config/destiny-cli/local.db`
 - **Rate limiting** is handled automatically (25 req/s with Retry-After backoff)
 - **Refresh tokens** last 90 days — you won't need to re-login often
+
+---
+
+## Support
+
+☕️ ❤️ If you enjoy this, [buy me some tokens](https://buymeacoffee.com/amircs).
