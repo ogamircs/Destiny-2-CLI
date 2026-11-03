@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { join } from "path";
-import { mkdir } from "fs/promises";
+import { mkdir, readdir, rename, rm } from "fs/promises";
 import { getLocalPaths } from "./config.ts";
 import { getManifestInfo, getManifestDbUrl } from "../api/manifest.ts";
 import { ManifestError } from "../utils/errors.ts";
@@ -98,41 +98,59 @@ export async function updateManifest(): Promise<void> {
     throw new ManifestError(`Failed to download manifest: ${res.status}`);
   }
 
-  // Bungie serves a zip file containing the SQLite DB
+  // Bungie serves a zip file containing the SQLite DB.
+  // Bun has no built-in unzip, so extract with the system unzip command.
   const zipData = await res.arrayBuffer();
-
-  // The response is actually a zip; we need to extract it
-  // Bun doesn't have built-in zip support, so we'll use a temp file + unzip command
   const zipPath = join(config.manifestDir, "manifest.zip");
   await Bun.write(zipPath, zipData);
 
-  const dbPath = getDbPath();
-  // Extract — the zip contains a single .content file
-  const proc = Bun.spawn(
-    ["unzip", "-o", "-j", zipPath, "-d", config.manifestDir],
-    { stdout: "pipe", stderr: "pipe" }
-  );
-  await proc.exited;
-
-  // Find the extracted .content file and rename it
-  const { stdout } = Bun.spawn(["ls", config.manifestDir], {
-    stdout: "pipe",
-  });
-  const files = (await new Response(stdout).text()).split("\n");
-  const contentFile = files.find((f) => f.endsWith(".content"));
-  if (contentFile) {
-    const contentPath = join(config.manifestDir, contentFile);
-    if (contentPath !== dbPath) {
-      Bun.spawn(["mv", contentPath, dbPath]);
-    }
+  try {
+    await extractManifestZip(zipPath, config.manifestDir, getDbPath());
+  } finally {
+    await rm(zipPath, { force: true });
   }
 
-  // Clean up zip
-  Bun.spawn(["rm", "-f", zipPath]);
-
-  // Save version
+  // Close any handle opened against the previous file before readers reopen it.
+  closeDb();
   await Bun.write(getVersionPath(), manifest.version);
   debug(`Manifest updated to version ${manifest.version}`);
+}
+
+async function extractManifestZip(
+  zipPath: string,
+  manifestDir: string,
+  dbPath: string
+): Promise<void> {
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn(["unzip", "-o", "-j", zipPath, "-d", manifestDir], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch (err) {
+    throw new ManifestError(
+      `The unzip command is required to install the Destiny manifest (${err instanceof Error ? err.message : String(err)}).`
+    );
+  }
+
+  const exitCode = await proc.exited;
+  const stderr = (await new Response(proc.stderr).text()).trim();
+  if (exitCode !== 0) {
+    throw new ManifestError(
+      `Failed to extract manifest (unzip exit ${exitCode})${stderr ? `: ${stderr}` : ""}`
+    );
+  }
+
+  const files = await readdir(manifestDir);
+  const contentFile = files.find((file) => file.endsWith(".content"));
+  if (!contentFile) {
+    throw new ManifestError("Manifest zip did not contain a .content database");
+  }
+
+  const contentPath = join(manifestDir, contentFile);
+  if (contentPath !== dbPath) {
+    await rename(contentPath, dbPath);
+  }
 }
 
 function getDb(): Database {
