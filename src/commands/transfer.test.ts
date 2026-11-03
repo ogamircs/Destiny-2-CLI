@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { Command } from "commander";
+import { ApiError } from "../utils/errors.ts";
 
 function makeCharacters() {
   return [
@@ -305,5 +306,152 @@ describe("transfer command", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.errors.some((line) => line.includes("Character"))).toBe(true);
+  });
+
+  test("retries once when Bungie says the item is not in the cached profile", async () => {
+    let loads = 0;
+    const loadInventoryContextMock = mock(async () => {
+      loads += 1;
+      return {
+        profile: {},
+        characters: makeCharacters(),
+        byCharacterId: new Map(makeCharacters().map((character) => [character.characterId, character])),
+        index: makeIndex(),
+      };
+    });
+    let transfers = 0;
+    const transferItemMock = mock(async () => {
+      transfers += 1;
+      if (transfers === 1) throw new ApiError("DestinyItemNotFound", 200, 1623);
+    });
+    const spinner = {
+      text: "",
+      start: mock(function () {
+        return spinner;
+      }),
+      succeed: mock(() => spinner),
+      fail: mock(() => spinner),
+    };
+
+    mock.module("./shared.ts", () => ({
+      loadInventoryContext: loadInventoryContextMock,
+      resolveCharacter: (
+        characters: ReturnType<typeof makeCharacters>,
+        query: string
+      ) => defaultResolveCharacter(characters, query),
+      locationLabel: () => "Vault",
+      runCommandAction: wrapCommandAction,
+      toLocatedItem: (item: ReturnType<typeof makeIndex>["all"][number]) => ({
+        name: item.name,
+        tier: item.tier,
+        slot: "",
+        instanceId: item.instanceId,
+        hash: item.hash,
+        quantity: item.quantity,
+        isEquipped: item.isEquipped,
+        location: "Vault",
+        characterId: undefined,
+        inVault: true,
+      }),
+    }));
+    mock.module("../api/inventory.ts", () => ({
+      transferItem: transferItemMock,
+      equipItem: mock(async () => undefined),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      createSpinner: mock(() => spinner),
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+    mock.module("../ui/prompts.ts", () => ({
+      pickItem: mock(async () => {
+        throw new Error("not used");
+      }),
+      pickCharacter: mock(async () => {
+        throw new Error("not used");
+      }),
+      pickDestination: mock(async () => {
+        throw new Error("not used");
+      }),
+      confirm: mock(async () => true),
+    }));
+
+    const { registerTransferCommand } = await import(
+      `./transfer.ts?t=${Date.now()}-${Math.random()}`
+    );
+    const result = await runCommand(registerTransferCommand, ["transfer", "Ace", "--to", "hunter"]);
+
+    expect(result.exitCode).toBeNull();
+    expect(loads).toBe(2);
+    expect(transfers).toBe(2);
+  });
+
+  test("exits non-zero when the transfer itself fails", async () => {
+    const transferItemMock = mock(async () => {
+      throw new Error("vault is full");
+    });
+    const spinner = {
+      text: "",
+      start: mock(function () {
+        return spinner;
+      }),
+      succeed: mock(() => spinner),
+      fail: mock(() => spinner),
+    };
+
+    mock.module("./shared.ts", () => ({
+      loadInventoryContext: mock(async () => ({
+        profile: {},
+        characters: makeCharacters(),
+        byCharacterId: new Map(makeCharacters().map((character) => [character.characterId, character])),
+        index: makeIndex(),
+      })),
+      resolveCharacter: (
+        characters: ReturnType<typeof makeCharacters>,
+        query: string
+      ) => defaultResolveCharacter(characters, query),
+      locationLabel: () => "Vault",
+      runCommandAction: wrapCommandAction,
+      toLocatedItem: (item: ReturnType<typeof makeIndex>["all"][number]) => ({
+        name: item.name,
+        tier: item.tier,
+        slot: "",
+        instanceId: item.instanceId,
+        hash: item.hash,
+        quantity: item.quantity,
+        isEquipped: item.isEquipped,
+        location: "Vault",
+        characterId: undefined,
+        inVault: true,
+      }),
+    }));
+    mock.module("../api/inventory.ts", () => ({
+      transferItem: transferItemMock,
+      equipItem: mock(async () => undefined),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      createSpinner: mock(() => spinner),
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+    mock.module("../ui/prompts.ts", () => ({
+      pickItem: mock(async () => {
+        throw new Error("not used");
+      }),
+      pickCharacter: mock(async () => {
+        throw new Error("not used");
+      }),
+      pickDestination: mock(async () => {
+        throw new Error("not used");
+      }),
+      confirm: mock(async () => true),
+    }));
+
+    const { registerTransferCommand } = await import(
+      `./transfer.ts?t=${Date.now()}-${Math.random()}`
+    );
+    const result = await runCommand(registerTransferCommand, ["transfer", "Ace", "--to", "hunter"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.errors.some((line) => line.includes("Transfer failed"))).toBe(true);
+    expect(transferItemMock).toHaveBeenCalledTimes(1);
   });
 });

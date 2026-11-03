@@ -2,10 +2,11 @@ import { Command } from "commander";
 import chalk from "chalk";
 import type { CharacterData } from "../api/profile.ts";
 import { equipItem, transferItem } from "../api/inventory.ts";
-import { className, success, error } from "../ui/format.ts";
+import { className, success } from "../ui/format.ts";
 import { createSpinner } from "../ui/spinner.ts";
 import { pickCharacter, pickItem } from "../ui/prompts.ts";
 import { formatError } from "../utils/errors.ts";
+import { withFreshProfileRetry } from "../services/move-retry.ts";
 import {
   loadInventoryContext,
   resolveCharacter,
@@ -35,73 +36,70 @@ export function registerEquipCommand(program: Command) {
     .description("Equip an item on a character")
     .option("-c, --character <class>", "Character class (titan/hunter/warlock)")
     .action(runCommandAction(async (itemQuery: string, opts) => {
-      const { characters, byCharacterId, index } = await loadInventoryContext();
-      const matches = findEquippableItems(index.all, byCharacterId, itemQuery);
-
-      if (matches.length === 0) {
-        console.log(error(`No equippable items found matching "${itemQuery}"`));
-        return;
-      }
-
-      const selected = matches.length === 1
-        ? matches[0]!
-        : (await pickItem(matches, "Multiple items found. Select one:")) as LocatedItem;
-
-      if (selected.isEquipped) {
-        console.log(chalk.yellow(`${selected.name} is already equipped`));
-        return;
-      }
-
-      let targetCharId: string;
-      if (opts.character) {
-        targetCharId = resolveCharacter(characters, opts.character).characterId;
-      } else if (selected.characterId && !selected.inVault) {
-        targetCharId = selected.characterId;
-      } else {
-        const character = await pickCharacter(characters, "Equip on which character?");
-        targetCharId = character.characterId;
-      }
-
-      const spinner = createSpinner(
-        `Equipping ${chalk.bold(selected.name)}...`
-      ).start();
-
+      const spinner = createSpinner(`Equipping ${chalk.bold(itemQuery)}...`).start();
       try {
-        if (selected.inVault) {
-          spinner.text = `Transferring ${chalk.bold(selected.name)} from vault...`;
-          await transferItem(
-            selected.hash,
-            1,
-            false,
-            selected.instanceId || "0",
-            targetCharId
-          );
-        } else if (selected.characterId !== targetCharId) {
-          spinner.text = `Moving ${chalk.bold(selected.name)} to vault...`;
-          await transferItem(
-            selected.hash,
-            1,
-            true,
-            selected.instanceId || "0",
-            selected.characterId!
-          );
-          spinner.text = `Moving ${chalk.bold(selected.name)} from vault...`;
-          await transferItem(
-            selected.hash,
-            1,
-            false,
-            selected.instanceId || "0",
-            targetCharId
-          );
-        }
+        const message = await withFreshProfileRetry(async () => {
+          const { characters, byCharacterId, index } = await loadInventoryContext();
+          const matches = findEquippableItems(index.all, byCharacterId, itemQuery);
+          if (matches.length === 0) {
+            throw new Error(`No equippable items found matching "${itemQuery}"`);
+          }
 
-        spinner.text = `Equipping ${chalk.bold(selected.name)}...`;
-        await equipItem(selected.instanceId || "0", targetCharId);
+          const selected = matches.length === 1
+            ? matches[0]!
+            : (await pickItem(matches, "Multiple items found. Select one:")) as LocatedItem;
 
-        const characterName = className(byCharacterId.get(targetCharId)!.classType);
-        spinner.succeed(success(`${selected.name} equipped on ${characterName}`));
+          if (selected.isEquipped) {
+            return `${selected.name} is already equipped`;
+          }
+
+          let targetCharId: string;
+          if (opts.character) {
+            targetCharId = resolveCharacter(characters, opts.character).characterId;
+          } else if (selected.characterId && !selected.inVault) {
+            targetCharId = selected.characterId;
+          } else {
+            const character = await pickCharacter(characters, "Equip on which character?");
+            targetCharId = character.characterId;
+          }
+
+          if (selected.inVault) {
+            spinner.text = `Transferring ${chalk.bold(selected.name)} from vault...`;
+            await transferItem(
+              selected.hash,
+              1,
+              false,
+              selected.instanceId || "0",
+              targetCharId
+            );
+          } else if (selected.characterId !== targetCharId) {
+            spinner.text = `Moving ${chalk.bold(selected.name)} to vault...`;
+            await transferItem(
+              selected.hash,
+              1,
+              true,
+              selected.instanceId || "0",
+              selected.characterId!
+            );
+            spinner.text = `Moving ${chalk.bold(selected.name)} from vault...`;
+            await transferItem(
+              selected.hash,
+              1,
+              false,
+              selected.instanceId || "0",
+              targetCharId
+            );
+          }
+
+          spinner.text = `Equipping ${chalk.bold(selected.name)}...`;
+          await equipItem(selected.instanceId || "0", targetCharId);
+          const characterName = className(byCharacterId.get(targetCharId)!.classType);
+          return `${selected.name} equipped on ${characterName}`;
+        });
+        spinner.succeed(success(message));
       } catch (err) {
-        spinner.fail(error(`Equip failed: ${formatError(err)}`));
+        spinner.fail();
+        throw new Error(`Equip failed: ${formatError(err)}`);
       }
     }));
 }

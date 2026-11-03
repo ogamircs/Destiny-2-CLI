@@ -2,10 +2,11 @@ import { Command } from "commander";
 import chalk from "chalk";
 import type { CharacterData } from "../api/profile.ts";
 import { transferItem } from "../api/inventory.ts";
-import { className, success, error } from "../ui/format.ts";
+import { className, success } from "../ui/format.ts";
 import { createSpinner } from "../ui/spinner.ts";
 import { pickCharacter, pickDestination, pickItem } from "../ui/prompts.ts";
 import { formatError } from "../utils/errors.ts";
+import { withFreshProfileRetry } from "../services/move-retry.ts";
 import {
   loadInventoryContext,
   resolveCharacter,
@@ -35,105 +36,115 @@ export function registerTransferCommand(program: Command) {
     .option("--to <destination>", "Destination: vault, titan, hunter, warlock")
     .option("--count <n>", "Stack count to transfer", "1")
     .action(runCommandAction(async (itemQuery: string, opts) => {
-      const { characters, byCharacterId, index } = await loadInventoryContext();
-      const matches = findItems(index.all, byCharacterId, itemQuery);
-
-      if (matches.length === 0) {
-        console.log(error(`No items found matching "${itemQuery}"`));
-        return;
-      }
-
-      const selected = matches.length === 1
-        ? matches[0]!
-        : (await pickItem(matches, "Multiple items found. Select one:")) as LocatedItem;
-
-      if (selected.isEquipped) {
-        console.log(
-          error(
-            `${selected.name} is currently equipped. Unequip it first or use: destiny equip`
-          )
-        );
-        return;
-      }
-
-      let toVault = false;
-      let destCharacterId: string | undefined;
-
-      if (opts.to) {
-        const toLower = opts.to.toLowerCase();
-        if (toLower === "vault") {
-          toVault = true;
-        } else {
-          destCharacterId = resolveCharacter(characters, opts.to).characterId;
-        }
-      } else {
-        const destination = await pickDestination(characters);
-        if (destination.type === "vault") {
-          toVault = true;
-        } else {
-          destCharacterId = destination.characterId;
-        }
-      }
-
-      const count = Number.parseInt(opts.count, 10) || 1;
-      const spinner = createSpinner(
-        `Transferring ${chalk.bold(selected.name)}...`
-      ).start();
-
+      const spinner = createSpinner(`Transferring ${chalk.bold(itemQuery)}...`).start();
       try {
-        if (selected.inVault && !toVault) {
-          if (!destCharacterId) {
-            const destination = await pickCharacter(
-              characters,
-              "Transfer to which character?"
-            );
-            destCharacterId = destination.characterId;
-          }
-          await transferItem(
-            selected.hash,
-            count,
-            false,
-            selected.instanceId || "0",
-            destCharacterId
-          );
-        } else if (!selected.inVault && toVault) {
-          await transferItem(
-            selected.hash,
-            count,
-            true,
-            selected.instanceId || "0",
-            selected.characterId!
-          );
-        } else if (!selected.inVault && !toVault && destCharacterId) {
-          spinner.text = `Moving ${chalk.bold(selected.name)} to vault...`;
-          await transferItem(
-            selected.hash,
-            count,
-            true,
-            selected.instanceId || "0",
-            selected.characterId!
-          );
-
-          spinner.text = `Moving ${chalk.bold(selected.name)} from vault...`;
-          await transferItem(
-            selected.hash,
-            count,
-            false,
-            selected.instanceId || "0",
-            destCharacterId
-          );
-        } else {
-          spinner.fail();
-          console.log(error("Item is already in the destination"));
-          return;
-        }
-
-        const destName = toVault
-          ? "Vault"
-          : className(byCharacterId.get(destCharacterId!)!.classType);
-        spinner.succeed(success(`${selected.name} transferred to ${destName}`));
+        const message = await withFreshProfileRetry(() =>
+          transferOnce(itemQuery, opts, (text) => {
+            spinner.text = text;
+          })
+        );
+        spinner.succeed(success(message));
       } catch (err) {
-        spinner.fail(error(`Transfer failed: ${formatError(err)}`));
+        spinner.fail();
+        throw new Error(`Transfer failed: ${formatError(err)}`);
       }
     }));
+}
+
+async function transferOnce(
+  itemQuery: string,
+  opts: { to?: string; count?: string },
+  setStatus: (text: string) => void
+): Promise<string> {
+  const { characters, byCharacterId, index } = await loadInventoryContext();
+  const matches = findItems(index.all, byCharacterId, itemQuery);
+
+  if (matches.length === 0) {
+    throw new Error(`No items found matching "${itemQuery}"`);
+  }
+
+  const selected = matches.length === 1
+    ? matches[0]!
+    : (await pickItem(matches, "Multiple items found. Select one:")) as LocatedItem;
+
+  if (selected.isEquipped) {
+    throw new Error(
+      `${selected.name} is currently equipped. Unequip it first or use: destiny equip`
+    );
+  }
+
+  let toVault = false;
+  let destCharacterId: string | undefined;
+
+  if (opts.to) {
+    const toLower = opts.to.toLowerCase();
+    if (toLower === "vault") {
+      toVault = true;
+    } else {
+      destCharacterId = resolveCharacter(characters, opts.to).characterId;
+    }
+  } else {
+    const destination = await pickDestination(characters);
+    if (destination.type === "vault") {
+      toVault = true;
+    } else {
+      destCharacterId = destination.characterId;
+    }
+  }
+
+  const count = Number.parseInt(opts.count ?? "1", 10) || 1;
+  setStatus(`Transferring ${selected.name}...`);
+
+  if (selected.inVault && !toVault) {
+    if (!destCharacterId) {
+      const destination = await pickCharacter(
+        characters,
+        "Transfer to which character?"
+      );
+      destCharacterId = destination.characterId;
+    }
+    await transferItem(
+      selected.hash,
+      count,
+      false,
+      selected.instanceId || "0",
+      destCharacterId
+    );
+  } else if (!selected.inVault && toVault) {
+    await transferItem(
+      selected.hash,
+      count,
+      true,
+      selected.instanceId || "0",
+      selected.characterId!
+    );
+  } else if (!selected.inVault && !toVault && destCharacterId) {
+    if (selected.characterId === destCharacterId) {
+      return `${selected.name} is already on that character`;
+    }
+    setStatus(`Moving ${selected.name} to vault...`);
+    await transferItem(
+      selected.hash,
+      count,
+      true,
+      selected.instanceId || "0",
+      selected.characterId!
+    );
+
+    setStatus(`Moving ${selected.name} from vault...`);
+    await transferItem(
+      selected.hash,
+      count,
+      false,
+      selected.instanceId || "0",
+      destCharacterId
+    );
+  } else {
+    return `${selected.name} is already in the destination`;
+  }
+
+  const destName = toVault
+    ? "Vault"
+    : className(byCharacterId.get(destCharacterId!)!.classType);
+  return `${selected.name} transferred to ${destName}`;
 }
