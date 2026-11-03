@@ -18,6 +18,7 @@ import {
 } from "../services/local-db.ts";
 import type { LoadoutItem } from "../services/local-db.ts";
 import { planMove, executePlan } from "../services/move-planner.ts";
+import { resolveCharacter } from "../services/character-resolve.ts";
 import { className, success, error, dim, header } from "../ui/format.ts";
 import { confirm, pickCharacter } from "../ui/prompts.ts";
 import { withSpinner, createSpinner } from "../ui/spinner.ts";
@@ -61,24 +62,6 @@ function loadoutApplyCandidateScore(
 // ---------------------------------------------------------------------------
 // Character resolution helpers
 // ---------------------------------------------------------------------------
-
-function resolveCharacter(
-  characters: CharacterData[],
-  classArg: string
-): CharacterData {
-  const lower = classArg.toLowerCase();
-  const char = characters.find(
-    (c) => className(c.classType).toLowerCase() === lower
-  );
-  if (!char) {
-    throw new Error(
-      `Character "${classArg}" not found. Available: ${characters
-        .map((c) => className(c.classType).toLowerCase())
-        .join(", ")}`
-    );
-  }
-  return char;
-}
 
 async function resolveCharacterForApply(
   characters: CharacterData[],
