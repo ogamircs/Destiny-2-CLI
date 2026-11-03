@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "fs";
-import { unlink } from "fs/promises";
+import { chmod, unlink } from "fs/promises";
 import { getLocalPaths } from "./config.ts";
 import { debug } from "../utils/logger.ts";
 
@@ -47,6 +47,7 @@ export async function saveTokens(tokens: StoredTokens): Promise<void> {
   const json = JSON.stringify(tokens);
   const encrypted = xorObfuscate(json, key);
   await Bun.write(config.tokenPath, encrypted);
+  await chmod(config.tokenPath, 0o600);
   debug("Tokens saved to", config.tokenPath);
 }
 

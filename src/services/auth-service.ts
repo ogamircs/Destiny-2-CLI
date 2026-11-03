@@ -1,12 +1,14 @@
-import { AUTH_URL, OAUTH_CALLBACK_PORT, API_BASE } from "../utils/constants.ts";
+import { OAUTH_CALLBACK_PORT, API_BASE } from "../utils/constants.ts";
 import { getConfig, getLocalPaths, ensureDirs } from "./config.ts";
 import { saveTokens, type StoredTokens } from "./token-store.ts";
 import { exchangeCode } from "../api/auth.ts";
+import { assertOAuthState, buildAuthorizeUrl, createOAuthState, escapeHtml } from "./oauth.ts";
 import { AuthError } from "../utils/errors.ts";
 import { debug } from "../utils/logger.ts";
 import open from "open";
 import { join } from "path";
 import { existsSync } from "fs";
+import { chmod } from "fs/promises";
 import { $ } from "bun";
 
 const CALLBACK_URL = `https://localhost:${OAUTH_CALLBACK_PORT}/callback`;
@@ -33,6 +35,7 @@ async function ensureTlsCert(): Promise<{ cert: string; key: string }> {
   if (!existsSync(certPath) || !existsSync(keyPath)) {
     debug("Generating self-signed TLS cert for localhost...");
     await $`openssl req -x509 -newkey rsa:2048 -keyout ${keyPath} -out ${certPath} -days 3650 -nodes -subj "/CN=localhost" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"`.quiet();
+    await chmod(keyPath, 0o600);
   }
 
   return {
@@ -46,7 +49,8 @@ export async function login(): Promise<StoredTokens> {
   await ensureDirs();
 
   const tls = await ensureTlsCert();
-  const authUrl = `${AUTH_URL}?client_id=${config.clientId}&response_type=code`;
+  const oauthState = createOAuthState();
+  const authUrl = buildAuthorizeUrl(config.clientId, oauthState);
 
   return new Promise<StoredTokens>((resolve, reject) => {
     let server: ReturnType<typeof Bun.serve>;
@@ -67,6 +71,15 @@ export async function login(): Promise<StoredTokens> {
         const code = url.searchParams.get("code");
         if (!code) {
           return new Response("Missing authorization code", { status: 400 });
+        }
+
+        try {
+          assertOAuthState(oauthState, url.searchParams.get("state"));
+        } catch (err) {
+          clearTimeout(timeout);
+          server.stop();
+          reject(err);
+          return new Response("Authentication failed", { status: 400 });
         }
 
         try {
@@ -135,7 +148,7 @@ export async function login(): Promise<StoredTokens> {
           return new Response(
             `<html><body style="font-family:system-ui;text-align:center;padding:60px;background:#0d0d0d;color:#fff">
               <h1 style="color:#c5a84e">✓ Logged in!</h1>
-              <p>Welcome, ${tokens.displayName}. You can close this tab and return to the terminal.</p>
+              <p>Welcome, ${escapeHtml(tokens.displayName)}. You can close this tab and return to the terminal.</p>
             </body></html>`,
             { headers: { "Content-Type": "text/html" } }
           );
