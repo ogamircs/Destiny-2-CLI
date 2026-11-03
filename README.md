@@ -1,4 +1,4 @@
-# Destiny 2 CLI
+# Destiny CLI
 
 A command-line tool for Destiny 2, with Destiny 1 support on Xbox and PlayStation. View your characters, browse inventory, transfer items, tag and annotate gear, search with a query language, appraise rolls against wishlists, and check stats — all from the terminal.
 
@@ -23,11 +23,13 @@ Destiny 2 is the default. Prefix any command with `--game d1` for Destiny 1. See
 
 ```bash
 # Clone the repo
-git clone https://github.com/ogamircs/Destiny-2-CLI.git
-cd Destiny-2-CLI
+git clone https://github.com/ogamircs/destiny-the-game-cli.git
+cd destiny-the-game-cli
 
 # Install dependencies
 bun install
+
+The command is still `destiny`. Tokens, the manifest, and the local database stay in `~/.config/destiny-cli` and `~/.cache/destiny-cli`, so an existing install keeps working after the repo rename.
 
 # Copy the env template and fill in your credentials
 cp .env.example .env

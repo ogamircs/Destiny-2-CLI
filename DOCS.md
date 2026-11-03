@@ -1,4 +1,4 @@
-# Destiny 2 CLI — Command Reference
+# Destiny CLI — Command Reference
 
 ## Global Flags
 

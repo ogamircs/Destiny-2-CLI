@@ -1,5 +1,5 @@
 {
-  "name": "destiny-cli",
+  "name": "destiny-the-game-cli",
   "version": "0.1.0",
   "module": "src/index.ts",
   "type": "module",
