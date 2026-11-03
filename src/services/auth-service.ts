@@ -2,7 +2,13 @@ import { OAUTH_CALLBACK_PORT, API_BASE } from "../utils/constants.ts";
 import { getConfig, getLocalPaths, ensureDirs } from "./config.ts";
 import { saveTokens, type LinkedMembership, type StoredTokens } from "./token-store.ts";
 import { exchangeCode } from "../api/auth.ts";
-import { assertOAuthState, buildAuthorizeUrl, createOAuthState, escapeHtml } from "./oauth.ts";
+import {
+  assertOAuthState,
+  buildAuthorizeUrl,
+  createOAuthState,
+  escapeHtml,
+  oauthTimeoutMs,
+} from "./oauth.ts";
 import { AuthError } from "../utils/errors.ts";
 import { debug } from "../utils/logger.ts";
 import open from "open";
@@ -52,12 +58,23 @@ export async function login(): Promise<StoredTokens> {
   const oauthState = createOAuthState();
   const authUrl = buildAuthorizeUrl(config.clientId, oauthState);
 
+  const timeoutMs = oauthTimeoutMs();
+  console.log(`\n  Open this URL to authorize:\n  ${authUrl}\n`);
+  console.log("  Waiting for the Bungie callback.");
+  console.log("  If the browser shows a security warning, click Advanced → Proceed to localhost.");
+  console.log(`  This login times out after ${Math.round(timeoutMs / 1000)}s.`);
+  console.log("  Override it with DESTINY_OAUTH_TIMEOUT_MS.\n");
+
   return new Promise<StoredTokens>((resolve, reject) => {
     let server: ReturnType<typeof Bun.serve>;
     const timeout = setTimeout(() => {
       server?.stop();
-      reject(new AuthError("OAuth flow timed out after 120 seconds"));
-    }, 120_000);
+      reject(
+        new AuthError(
+          `OAuth flow timed out after ${Math.round(timeoutMs / 1000)} seconds`
+        )
+      );
+    }, timeoutMs);
 
     server = Bun.serve({
       port: OAUTH_CALLBACK_PORT,
@@ -170,8 +187,9 @@ export async function login(): Promise<StoredTokens> {
     });
 
     debug(`OAuth callback server listening on ${CALLBACK_URL}`);
-    console.log(`\n  Opening browser for Bungie authorization...`);
-    console.log(`  (If the browser shows a security warning, click Advanced → Proceed to localhost)\n`);
-    open(authUrl);
+    void Promise.resolve(open(authUrl)).catch((err: unknown) => {
+      debug("Could not open a browser:", err);
+      console.log("  Could not open a browser. Use the URL above.");
+    });
   });
 }

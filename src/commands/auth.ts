@@ -16,9 +16,6 @@ export function registerAuthCommands(program: Command) {
     .action(async () => {
       const spinner = createSpinner("Waiting for Bungie authorization...").start();
       try {
-        console.log(
-          chalk.dim("Opening browser for Bungie authorization...")
-        );
         const tokens = await login();
         spinner.succeed(
           success(`Logged in as ${chalk.bold(tokens.displayName)}`)

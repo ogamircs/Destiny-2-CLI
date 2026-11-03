@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { AUTH_URL } from "../utils/constants.ts";
 import { AuthError } from "../utils/errors.ts";
-import { assertOAuthState, buildAuthorizeUrl, escapeHtml } from "./oauth.ts";
+import {
+  assertOAuthState,
+  buildAuthorizeUrl,
+  DEFAULT_OAUTH_TIMEOUT_MS,
+  escapeHtml,
+  oauthTimeoutMs,
+} from "./oauth.ts";
 
 describe("oauth helpers", () => {
   test("buildAuthorizeUrl includes the client id and state", () => {
@@ -17,6 +23,14 @@ describe("oauth helpers", () => {
     expect(() => assertOAuthState("expected", null)).toThrow(AuthError);
     expect(() => assertOAuthState("expected", "other")).toThrow(
       "OAuth state mismatch"
+    );
+  });
+
+  test("oauth timeout defaults to five minutes and honors the env override", () => {
+    expect(oauthTimeoutMs({})).toBe(DEFAULT_OAUTH_TIMEOUT_MS);
+    expect(oauthTimeoutMs({ DESTINY_OAUTH_TIMEOUT_MS: "90000" })).toBe(90_000);
+    expect(oauthTimeoutMs({ DESTINY_OAUTH_TIMEOUT_MS: "nope" })).toBe(
+      DEFAULT_OAUTH_TIMEOUT_MS
     );
   });
 

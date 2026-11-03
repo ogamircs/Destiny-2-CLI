@@ -1,6 +1,18 @@
 import { AUTH_URL } from "../utils/constants.ts";
 import { AuthError } from "../utils/errors.ts";
 
+export const DEFAULT_OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
+
+export function oauthTimeoutMs(
+  env: Record<string, string | undefined> = process.env
+): number {
+  const raw = env.DESTINY_OAUTH_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_OAUTH_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1_000) return DEFAULT_OAUTH_TIMEOUT_MS;
+  return parsed;
+}
+
 export function createOAuthState(): string {
   return crypto.randomUUID();
 }
