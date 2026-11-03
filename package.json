@@ -11,8 +11,9 @@
     "start": "bun run src/index.ts",
     "build": "bun run scripts/build.ts",
     "dev": "bun run --watch src/index.ts",
-    "test": "bun test",
-    "test:watch": "bun test --watch",
+    "test": "bun test --isolate",
+    "test:watch": "bun test --watch --isolate",
+    "typecheck": "tsc --noEmit",
     "test:p1": "for f in src/services/search.test.ts src/services/wishlist.test.ts src/services/local-db.test.ts src/commands/tag.test.ts src/commands/search.test.ts src/commands/farming.test.ts src/commands/rolls.test.ts; do bun test \"$f\" || exit 1; done"
   },
   "devDependencies": {
