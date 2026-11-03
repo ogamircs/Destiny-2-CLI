@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { Command } from "commander";
+import { recordRecentMove } from "../services/recent-moves.ts";
 import { ApiError } from "../utils/errors.ts";
+
+process.env.DESTINY_RECENT_MOVES_DIR = mkdtempSync(join(tmpdir(), "destiny-transfer-moves-"));
 
 function makeCharacters() {
   return [
@@ -150,7 +156,12 @@ function wrapCommandAction<TArgs extends unknown[]>(
 }
 
 describe("transfer command", () => {
-  afterEach(() => mock.restore());
+  afterEach(() => {
+    mock.restore();
+    rmSync(join(process.env.DESTINY_RECENT_MOVES_DIR!, "recent-moves.json"), {
+      force: true,
+    });
+  });
 
   test("moves a vault item to an explicit character using shared inventory context", async () => {
     const loadInventoryContextMock = mock(async () => ({
@@ -453,5 +464,105 @@ describe("transfer command", () => {
     expect(result.exitCode).toBe(1);
     expect(result.errors.some((line) => line.includes("Transfer failed"))).toBe(true);
     expect(transferItemMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not treat a stale on-character profile as already there after a vault move", async () => {
+    const onWarlock = {
+      ...makeIndex().all[0]!,
+      instanceId: "inst-just-vaulted",
+      location: "warlock-id",
+    };
+    const characters = [
+      ...makeCharacters(),
+      {
+        ...makeCharacters()[0]!,
+        characterId: "warlock-id",
+        classType: 2,
+      },
+    ];
+    recordRecentMove({
+      instanceId: "inst-just-vaulted",
+      hash: onWarlock.hash,
+      name: onWarlock.name,
+      location: "vault",
+      at: Date.now(),
+    });
+    const transferItemMock = mock(async () => undefined);
+    const spinner = {
+      text: "",
+      start: mock(function () {
+        return spinner;
+      }),
+      succeed: mock(() => spinner),
+      fail: mock(() => spinner),
+    };
+
+    mock.module("./shared.ts", () => ({
+      loadInventoryContext: mock(async () => ({
+        profile: {},
+        characters,
+        byCharacterId: new Map(characters.map((character) => [character.characterId, character])),
+        index: { ...makeIndex(), all: [onWarlock] },
+      })),
+      resolveCharacter: (
+        list: typeof characters,
+        query: string
+      ) => defaultResolveCharacter(list, query),
+      locationLabel: () => "Warlock",
+      runCommandAction: wrapCommandAction,
+      toLocatedItem: (item: typeof onWarlock) => ({
+        name: item.name,
+        tier: item.tier,
+        slot: "",
+        instanceId: item.instanceId,
+        hash: item.hash,
+        quantity: item.quantity,
+        isEquipped: item.isEquipped,
+        location: "Warlock",
+        characterId: "warlock-id",
+        inVault: false,
+      }),
+    }));
+    mock.module("../api/inventory.ts", () => ({
+      transferItem: transferItemMock,
+      equipItem: mock(async () => undefined),
+    }));
+    mock.module("../ui/spinner.ts", () => ({
+      createSpinner: mock(() => spinner),
+      withSpinner: mock(async (_: string, fn: () => Promise<unknown>) => fn()),
+    }));
+    mock.module("../ui/prompts.ts", () => ({
+      pickItem: mock(async () => {
+        throw new Error("not used");
+      }),
+      pickCharacter: mock(async () => {
+        throw new Error("not used");
+      }),
+      pickDestination: mock(async () => {
+        throw new Error("not used");
+      }),
+      confirm: mock(async () => true),
+    }));
+
+    const { registerTransferCommand } = await import(
+      `./transfer.ts?t=${Date.now()}-${Math.random()}`
+    );
+    const result = await runCommand(registerTransferCommand, [
+      "transfer",
+      "Ace",
+      "--to",
+      "warlock",
+    ]);
+
+    expect(result.exitCode).toBeNull();
+    expect(transferItemMock).toHaveBeenCalledWith(
+      onWarlock.hash,
+      1,
+      false,
+      "inst-just-vaulted",
+      "warlock-id"
+    );
+    const succeeded = spinner.succeed.mock.calls.map((call) => String(call[0] ?? "")).join(" ");
+    expect(succeeded).not.toContain("already");
   });
 });

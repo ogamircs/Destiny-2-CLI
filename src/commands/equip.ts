@@ -7,6 +7,7 @@ import { createSpinner } from "../ui/spinner.ts";
 import { pickCharacter, pickItem } from "../ui/prompts.ts";
 import { formatError } from "../utils/errors.ts";
 import { withFreshProfileRetry } from "../services/move-retry.ts";
+import { applyRecentLocation, recordRecentMove } from "../services/recent-moves.ts";
 import {
   loadInventoryContext,
   resolveCharacter,
@@ -40,14 +41,18 @@ export function registerEquipCommand(program: Command) {
       try {
         const message = await withFreshProfileRetry(async () => {
           const { characters, byCharacterId, index } = await loadInventoryContext();
-          const matches = findEquippableItems(index.all, byCharacterId, itemQuery);
+          const matches = findEquippableItems(index.all, byCharacterId, itemQuery).map((item) =>
+            applyRecentLocation(item)
+          );
           if (matches.length === 0) {
             throw new Error(`No equippable items found matching "${itemQuery}"`);
           }
 
           const selected = matches.length === 1
             ? matches[0]!
-            : (await pickItem(matches, "Multiple items found. Select one:")) as LocatedItem;
+            : applyRecentLocation(
+                (await pickItem(matches, "Multiple items found. Select one:")) as LocatedItem
+              );
 
           if (selected.isEquipped) {
             return `${selected.name} is already equipped`;
@@ -63,6 +68,16 @@ export function registerEquipCommand(program: Command) {
             targetCharId = character.characterId;
           }
 
+          const remember = (location: string) => {
+            if (!selected.instanceId) return;
+            recordRecentMove({
+              instanceId: selected.instanceId,
+              hash: selected.hash,
+              name: selected.name,
+              location,
+            });
+          };
+
           if (selected.inVault) {
             spinner.text = `Transferring ${chalk.bold(selected.name)} from vault...`;
             await transferItem(
@@ -72,6 +87,7 @@ export function registerEquipCommand(program: Command) {
               selected.instanceId || "0",
               targetCharId
             );
+            remember(targetCharId);
           } else if (selected.characterId !== targetCharId) {
             spinner.text = `Moving ${chalk.bold(selected.name)} to vault...`;
             await transferItem(
@@ -81,6 +97,7 @@ export function registerEquipCommand(program: Command) {
               selected.instanceId || "0",
               selected.characterId!
             );
+            remember("vault");
             spinner.text = `Moving ${chalk.bold(selected.name)} from vault...`;
             await transferItem(
               selected.hash,
@@ -89,6 +106,7 @@ export function registerEquipCommand(program: Command) {
               selected.instanceId || "0",
               targetCharId
             );
+            remember(targetCharId);
           }
 
           spinner.text = `Equipping ${chalk.bold(selected.name)}...`;

@@ -27,11 +27,27 @@ describe("withFreshProfileRetry", () => {
     let calls = 0;
     const result = await withFreshProfileRetry(async () => {
       calls += 1;
-      if (calls === 1) throw new Error("No items found matching \"Ace\"");
+      if (calls === 1) throw new ApiError("DestinyItemNotFound", 200, 1623);
       return "ok";
     });
     expect(result).toBe("ok");
     expect(calls).toBe(2);
+  });
+
+  test("does not add the cache hint for a name that was never moved", async () => {
+    let calls = 0;
+    try {
+      await withFreshProfileRetry(async () => {
+        calls += 1;
+        throw new Error('No items found matching "NotARealGun"');
+      });
+      throw new Error("expected the missing item to fail");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toBe('No items found matching "NotARealGun"');
+      expect(message).not.toContain("cached");
+    }
+    expect(calls).toBe(1);
   });
 
   test("does not retry unrelated failures", async () => {

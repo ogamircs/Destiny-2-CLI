@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { Command } from "commander";
+
+process.env.DESTINY_RECENT_MOVES_DIR = mkdtempSync(join(tmpdir(), "destiny-equip-moves-"));
 
 function makeCharacters() {
   return [

@@ -7,6 +7,7 @@ import { createSpinner } from "../ui/spinner.ts";
 import { pickCharacter, pickDestination, pickItem } from "../ui/prompts.ts";
 import { formatError } from "../utils/errors.ts";
 import { withFreshProfileRetry } from "../services/move-retry.ts";
+import { applyRecentLocation, recordRecentMove } from "../services/recent-moves.ts";
 import {
   loadInventoryContext,
   resolveCharacter,
@@ -57,7 +58,9 @@ async function transferOnce(
   setStatus: (text: string) => void
 ): Promise<string> {
   const { characters, byCharacterId, index } = await loadInventoryContext();
-  const matches = findItems(index.all, byCharacterId, itemQuery);
+  const matches = findItems(index.all, byCharacterId, itemQuery).map((item) =>
+    applyRecentLocation(item)
+  );
 
   if (matches.length === 0) {
     throw new Error(`No items found matching "${itemQuery}"`);
@@ -65,7 +68,9 @@ async function transferOnce(
 
   const selected = matches.length === 1
     ? matches[0]!
-    : (await pickItem(matches, "Multiple items found. Select one:")) as LocatedItem;
+    : applyRecentLocation(
+        (await pickItem(matches, "Multiple items found. Select one:")) as LocatedItem
+      );
 
   if (selected.isEquipped) {
     throw new Error(
@@ -95,6 +100,16 @@ async function transferOnce(
   const count = Number.parseInt(opts.count ?? "1", 10) || 1;
   setStatus(`Transferring ${selected.name}...`);
 
+  const remember = (location: string) => {
+    if (!selected.instanceId) return;
+    recordRecentMove({
+      instanceId: selected.instanceId,
+      hash: selected.hash,
+      name: selected.name,
+      location,
+    });
+  };
+
   if (selected.inVault && !toVault) {
     if (!destCharacterId) {
       const destination = await pickCharacter(
@@ -110,6 +125,7 @@ async function transferOnce(
       selected.instanceId || "0",
       destCharacterId
     );
+    remember(destCharacterId);
   } else if (!selected.inVault && toVault) {
     await transferItem(
       selected.hash,
@@ -118,6 +134,7 @@ async function transferOnce(
       selected.instanceId || "0",
       selected.characterId!
     );
+    remember("vault");
   } else if (!selected.inVault && !toVault && destCharacterId) {
     if (selected.characterId === destCharacterId) {
       return `${selected.name} is already on that character`;
@@ -130,6 +147,7 @@ async function transferOnce(
       selected.instanceId || "0",
       selected.characterId!
     );
+    remember("vault");
 
     setStatus(`Moving ${selected.name} from vault...`);
     await transferItem(
@@ -139,6 +157,7 @@ async function transferOnce(
       selected.instanceId || "0",
       destCharacterId
     );
+    remember(destCharacterId);
   } else {
     return `${selected.name} is already in the destination`;
   }
