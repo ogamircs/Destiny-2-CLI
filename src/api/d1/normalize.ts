@@ -88,11 +88,15 @@ export function normalizeD1Item(
 export function collectD1Items(raw: unknown): NormalizedD1Item[] {
   const root = asRecord(unwrapData(raw));
   if (!root) return [];
-  const buckets = asRecord(root.buckets);
-  if (!buckets) return [];
+  // Character inventories group buckets by category. The vault endpoint
+  // returns data.buckets as a flat array of those same bucket objects.
+  const groups: unknown[] = Array.isArray(root.buckets)
+    ? [root.buckets]
+    : Object.values(asRecord(root.buckets) ?? {});
+  if (groups.length === 0) return [];
 
   const items: NormalizedD1Item[] = [];
-  for (const group of Object.values(buckets)) {
+  for (const group of groups) {
     const bucketList = Array.isArray(group) ? group : group ? [group] : [];
     for (const bucket of bucketList) {
       const bucketRecord = asRecord(bucket);

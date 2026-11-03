@@ -35,6 +35,22 @@ describe("Destiny 1 normalization", () => {
     });
   });
 
+  test("collects items from the vault's flat bucket array", () => {
+    const items = collectD1Items({
+      data: {
+        buckets: [
+          { bucketHash: 1498876634, items: [{ itemHash: 10, itemInstanceId: "vault-1" }] },
+          { bucketHash: 2465295065, items: [{ itemHash: 11, itemId: "vault-2", stackSize: 4 }] },
+        ],
+      },
+    });
+
+    expect(items.map((item) => [item.itemHash, item.bucketHash, item.quantity])).toEqual([
+      [10, 1498876634, 1],
+      [11, 2465295065, 4],
+    ]);
+  });
+
   test("collects items from bucket groups that are either arrays or a single bucket", () => {
     const items = collectD1Items({
       data: {
