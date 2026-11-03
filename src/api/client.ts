@@ -8,56 +8,58 @@ import {
   type StoredTokens,
 } from "../services/token-store.ts";
 import { refreshAccessToken, type TokenResponse } from "./auth.ts";
+import { createRateLimiter } from "./rate-limit.ts";
 import { ApiError, AuthError, RateLimitError } from "../utils/errors.ts";
 import { debug } from "../utils/logger.ts";
 
-// Simple sliding window rate limiter
-const requestTimestamps: number[] = [];
+const rateLimiter = createRateLimiter({ limit: RATE_LIMIT_PER_SECOND });
 
-function waitForRateLimit(): Promise<void> {
+// Concurrent requests share one refresh so a rotated refresh token is not used twice.
+let refreshInFlight: Promise<StoredTokens> | null = null;
+
+async function refreshTokens(tokens: StoredTokens): Promise<StoredTokens> {
+  debug("Access token expired, refreshing...");
+  const refreshed: TokenResponse = await refreshAccessToken(tokens.refreshToken);
   const now = Date.now();
-  // Remove timestamps older than 1 second
-  while (requestTimestamps.length > 0 && requestTimestamps[0]! < now - 1000) {
-    requestTimestamps.shift();
-  }
-  if (requestTimestamps.length >= RATE_LIMIT_PER_SECOND) {
-    const waitMs = 1000 - (now - requestTimestamps[0]!) + 10;
-    debug(`Rate limit: waiting ${waitMs}ms`);
-    return new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
-  return Promise.resolve();
+  const next: StoredTokens = {
+    ...tokens,
+    accessToken: refreshed.access_token,
+    refreshToken: refreshed.refresh_token,
+    accessTokenExpiresAt: now + refreshed.expires_in * 1000,
+    refreshTokenExpiresAt: now + refreshed.refresh_expires_in * 1000,
+  };
+  await saveTokens(next);
+  debug("Tokens refreshed and saved");
+  return next;
 }
 
 async function getValidTokens(): Promise<StoredTokens> {
-  let tokens = loadTokens();
+  const tokens = loadTokens();
   if (!tokens) {
     throw new AuthError("Not logged in. Run: destiny auth login");
   }
 
-  if (isTokenExpired(tokens)) {
-    if (isRefreshTokenExpired(tokens)) {
-      throw new AuthError(
-        "Session expired. Please re-login: destiny auth login"
-      );
-    }
-
-    debug("Access token expired, refreshing...");
-    const refreshed: TokenResponse = await refreshAccessToken(
-      tokens.refreshToken
-    );
-    const now = Date.now();
-    tokens = {
-      ...tokens,
-      accessToken: refreshed.access_token,
-      refreshToken: refreshed.refresh_token,
-      accessTokenExpiresAt: now + refreshed.expires_in * 1000,
-      refreshTokenExpiresAt: now + refreshed.refresh_expires_in * 1000,
-    };
-    await saveTokens(tokens);
-    debug("Tokens refreshed and saved");
+  if (!isTokenExpired(tokens)) {
+    return tokens;
   }
 
-  return tokens;
+  if (isRefreshTokenExpired(tokens)) {
+    throw new AuthError("Session expired. Please re-login: destiny auth login");
+  }
+
+  if (!refreshInFlight) {
+    refreshInFlight = refreshTokens(tokens).finally(() => {
+      refreshInFlight = null;
+    });
+  }
+
+  return refreshInFlight;
+}
+
+function clipBody(text: string, max = 300): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max)}…`;
 }
 
 interface BungieResponse<T> {
@@ -79,8 +81,7 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const { method = "GET", body, auth = true } = options;
 
-  await waitForRateLimit();
-  requestTimestamps.push(Date.now());
+  await rateLimiter.acquire();
 
   const config = getConfig();
   const headers: Record<string, string> = {
@@ -111,12 +112,9 @@ export async function apiRequest<T>(
   }
 
   if (!res.ok) {
-    const text = await res.text();
+    const text = clipBody(await res.text());
     debug(`API error: ${res.status}`, text);
-    throw new ApiError(
-      `Bungie API error: ${text}`,
-      res.status
-    );
+    throw new ApiError(`Bungie API error: ${text}`, res.status);
   }
 
   const json = (await res.json()) as BungieResponse<T>;

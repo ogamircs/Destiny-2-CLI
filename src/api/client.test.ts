@@ -279,4 +279,32 @@ describe("apiRequest", () => {
       ctx.cleanup();
     }
   });
+
+  test("refreshes an expired access token once for concurrent requests", async () => {
+    const ctx = await setupClientTest();
+    try {
+      ctx.isTokenExpiredMock.mockReturnValue(true);
+      ctx.isRefreshTokenExpiredMock.mockReturnValue(false);
+      let refreshes = 0;
+      ctx.refreshAccessTokenMock.mockImplementation(async () => {
+        refreshes += 1;
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return {
+          access_token: "fresh-access-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+          refresh_token: "fresh-refresh-token",
+          refresh_expires_in: 7_776_000,
+          membership_id: "membership-1",
+        };
+      });
+
+      await Promise.all([ctx.apiRequest("/One"), ctx.apiRequest("/Two")]);
+
+      expect(refreshes).toBe(1);
+      expect(ctx.saveTokensMock).toHaveBeenCalledTimes(1);
+    } finally {
+      ctx.cleanup();
+    }
+  });
 });
