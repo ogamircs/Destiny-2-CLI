@@ -6,6 +6,7 @@ import { getLocalPaths } from "./config.ts";
 import { getManifestInfo, getManifestDbUrl } from "../api/manifest.ts";
 import { getD1ManifestInfo } from "../api/d1/endpoints.ts";
 import { getGame, type GameId } from "../games/context.ts";
+import { definitionDisplayName } from "./definition-name.ts";
 import { ManifestError } from "../utils/errors.ts";
 import { debug } from "../utils/logger.ts";
 
@@ -230,7 +231,10 @@ const MANIFEST_NAME_TABLES = new Set([
   "DestinyRecordBookDefinition",
   "DestinyInventoryItemDefinition",
   "DestinyVendorDefinition",
+  "DestinyFactionDefinition",
 ]);
+
+let factionNameByProgression: Map<number, string> | null = null;
 
 export function lookupManifestName(table: string, hash: number): string | null {
   if (!MANIFEST_NAME_TABLES.has(table)) {
@@ -242,15 +246,29 @@ export function lookupManifestName(table: string, hash: number): string | null {
       .query(`SELECT json FROM ${table} WHERE id = ?`)
       .get(toSignedHash(hash)) as ManifestJsonRow | null;
     if (!row) return null;
-    const data = JSON.parse(row.json) as Record<string, unknown>;
-    const display = recordField(data.displayProperties);
-    const summary = recordField(data.summary);
-    const name =
-      stringField(display?.name) ||
-      stringField(data.name) ||
-      stringField(data.displayName) ||
-      stringField(summary?.vendorName);
-    return name.trim() ? name : null;
+    return definitionDisplayName(JSON.parse(row.json) as Record<string, unknown>);
+  } catch {
+    return null;
+  }
+}
+
+export function lookupFactionNameForProgression(progressionHash: number): string | null {
+  try {
+    if (!factionNameByProgression) {
+      factionNameByProgression = new Map();
+      const database = getDb();
+      const rows = database
+        .query("SELECT json FROM DestinyFactionDefinition")
+        .all() as ManifestJsonRow[];
+      for (const row of rows) {
+        const data = JSON.parse(row.json) as Record<string, unknown>;
+        const name = definitionDisplayName(data);
+        const linked = numberField(data.progressionHash);
+        if (!name || linked === undefined) continue;
+        factionNameByProgression.set(linked, name);
+      }
+    }
+    return factionNameByProgression.get(progressionHash) ?? null;
   } catch {
     return null;
   }
@@ -581,6 +599,7 @@ export function closeDb() {
     db = null;
   }
   openGame = null;
+  factionNameByProgression = null;
   plugSetCache = new Map<number, number[]>();
   plugPerkCache = new Map<number, number[]>();
 }

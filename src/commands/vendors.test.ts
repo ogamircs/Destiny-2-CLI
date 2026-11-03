@@ -105,6 +105,12 @@ async function setupVendorsCommandTest() {
   mock.module("../ui/spinner.ts", () => ({
     withSpinner: withSpinnerMock,
   }));
+  mock.module("../services/manifest-cache.ts", () => ({
+    ensureManifest: async () => {},
+    lookupManifestName: (_table: string, hash: number) =>
+      hash === 2190858386 ? "Banshee-44" : null,
+    lookupFactionNameForProgression: () => null,
+  }));
 
   const { registerVendorsCommand } = await import(
     `./vendors.ts?test=${Date.now()}-${Math.random()}`
@@ -173,6 +179,7 @@ describe("vendors command", () => {
     });
     expect(output.vendors[0]).toMatchObject({
       vendorHash: 2190858386,
+      vendorLabel: "Banshee-44",
       categoryCount: 3,
       saleItemCount: 5,
       enabledOn: 2,

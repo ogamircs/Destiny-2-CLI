@@ -209,7 +209,8 @@ export function buildProgressReport(input: {
 }
 
 export function buildVendorsReport(
-  snapshots: CharacterVendorSnapshot[]
+  snapshots: CharacterVendorSnapshot[],
+  vendorName?: (vendorHash: number) => string | null
 ): VendorsReport {
   const vendorMap = new Map<
     number,
@@ -263,7 +264,7 @@ export function buildVendorsReport(
   const vendors: FeaturedVendorSummary[] = [...vendorMap.values()]
     .map((vendor) => ({
       vendorHash: vendor.vendorHash,
-      vendorLabel: `Vendor ${vendor.vendorHash}`,
+      vendorLabel: vendorName?.(vendor.vendorHash) || `Vendor ${vendor.vendorHash}`,
       characters: [...vendor.characters].sort((a, b) => a.localeCompare(b)),
       categoryCount: vendor.categoryCount,
       saleItemCount: vendor.saleItemCount,

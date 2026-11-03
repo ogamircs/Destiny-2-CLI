@@ -11,6 +11,7 @@ import { error, header } from "../ui/format.ts";
 import { formatError } from "../utils/errors.ts";
 import { buildVendorsReport } from "../services/progression.ts";
 import { loadD1Advisors } from "../services/d1-views.ts";
+import { ensureManifest, lookupManifestName } from "../services/manifest-cache.ts";
 import { getGame } from "../games/context.ts";
 
 const VENDOR_COMPONENTS = [
@@ -54,6 +55,7 @@ export function registerVendorsCommand(program: Command) {
           return;
         }
 
+        await withSpinner("Loading manifest...", () => ensureManifest());
         const profile = await withSpinner("Fetching characters...", () =>
           getProfile([DestinyComponentType.Characters])
         );
@@ -72,7 +74,9 @@ export function registerVendorsCommand(program: Command) {
           )
         );
 
-        const report = buildVendorsReport(vendorResponses);
+        const report = buildVendorsReport(vendorResponses, (vendorHash) =>
+          lookupManifestName("DestinyVendorDefinition", vendorHash)
+        );
 
         if (opts.json) {
           console.log(JSON.stringify(report, null, 2));

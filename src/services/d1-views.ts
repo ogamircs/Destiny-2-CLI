@@ -8,8 +8,10 @@ import { normalizeD1Account } from "../api/d1/normalize.ts";
 import { asRecord } from "../api/d1/paths.ts";
 import { className } from "../ui/format.ts";
 import {
+  lookupFactionNameForProgression,
   lookupManifestName,
 } from "./manifest-cache.ts";
+import { htmlToText, isInternalCodeName } from "./definition-name.ts";
 import { resolveActiveMembership } from "./membership.ts";
 
 export interface D1ProgressionRow {
@@ -67,7 +69,13 @@ function progressionRows(raw: unknown): D1ProgressionRow[] {
     const level = numberOf(progression.level) ?? 0;
     const current = numberOf(progression.currentProgress) ?? numberOf(progression.progressToNextLevel) ?? 0;
     const next = numberOf(progression.nextLevelAt);
-    const name = (hash !== undefined ? lookupManifestName("DestinyProgressionDefinition", hash) : null) ??
+    const definitionName =
+      hash !== undefined ? lookupManifestName("DestinyProgressionDefinition", hash) : null;
+    const factionName =
+      hash !== undefined ? lookupFactionNameForProgression(hash) : null;
+    const name =
+      (factionName && !isInternalCodeName(factionName) ? factionName : null) ??
+      definitionName ??
       (hash !== undefined ? `Progression ${hash}` : "Progression");
     return [{
       name,
@@ -174,14 +182,14 @@ export async function loadD1Advisors(): Promise<D1AdvisorCharacter[]> {
         if (!activity) continue;
         const display = asRecord(activity.display);
         const status = asRecord(activity.status);
-        const name =
+        const rawName =
           (typeof display?.advisorTypeCategory === "string" && display.advisorTypeCategory) ||
           (typeof activity.identifier === "string" && activity.identifier) ||
           key;
         rows.push({
-          name,
+          name: htmlToText(rawName),
           active: typeof status?.active === "boolean" ? status.active : null,
-          about: typeof display?.about === "string" ? display.about : "",
+          about: htmlToText(typeof display?.about === "string" ? display.about : ""),
         });
       }
       rows.sort((a, b) => a.name.localeCompare(b.name));
