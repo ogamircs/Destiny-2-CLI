@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import { mkdirSync } from "fs";
+import { setGame } from "../games/context.ts";
 
 // ---------------------------------------------------------------------------
 // Create a unique temp dir per test run so tests are fully isolated
@@ -288,6 +289,41 @@ describe("roll source", () => {
 // ---------------------------------------------------------------------------
 // Migrations idempotent
 // ---------------------------------------------------------------------------
+describe("game scoping", () => {
+  test("keeps Destiny 1 tags and loadouts separate from Destiny 2", () => {
+    try {
+      setGame("d2");
+      expect(itemKey({ instanceId: "abc", hash: 1 })).toBe("abc");
+      addTag({ instanceId: "abc", hash: 1 }, "keep");
+      saveLoadout({
+        name: "shared-name",
+        classType: 0,
+        items: [],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+
+      setGame("d1");
+      expect(itemKey({ instanceId: "abc", hash: 1 })).toBe("d1:abc");
+      expect(getTags({ instanceId: "abc", hash: 1 })).toEqual([]);
+      expect(getLoadout("shared-name")).toBeNull();
+      saveLoadout({
+        name: "shared-name",
+        classType: 1,
+        items: [],
+        createdAt: 2,
+        updatedAt: 2,
+      });
+
+      setGame("d2");
+      expect(getTags({ instanceId: "abc", hash: 1 })).toEqual(["keep"]);
+      expect(getLoadout("shared-name")?.classType).toBe(0);
+    } finally {
+      setGame("d2");
+    }
+  });
+});
+
 describe("migrations", () => {
   test("opening the same DB twice does not error", () => {
     // First open happens in afterEach-reset cycle; open it again

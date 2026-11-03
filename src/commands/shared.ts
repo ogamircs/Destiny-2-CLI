@@ -1,4 +1,5 @@
 import { getProfile, type CharacterData } from "../api/profile.ts";
+import { resolveCharacter as resolveCharacterByName } from "../services/character-resolve.ts";
 import {
   buildInventoryIndex,
   getRequiredComponents,
@@ -70,20 +71,7 @@ export function resolveCharacter(
   characters: CharacterData[],
   classArg: string
 ): CharacterData {
-  const lower = classArg.toLowerCase();
-  const character = characters.find(
-    (candidate) => className(candidate.classType).toLowerCase() === lower
-  );
-
-  if (!character) {
-    throw new Error(
-      `Character "${classArg}" not found. Available: ${characters
-        .map((candidate) => className(candidate.classType).toLowerCase())
-        .join(", ")}`
-    );
-  }
-
-  return character;
+  return resolveCharacterByName(characters, classArg);
 }
 
 export function locationLabel(

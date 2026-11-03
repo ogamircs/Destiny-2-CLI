@@ -8,11 +8,15 @@ import { DestinyComponentType } from "../utils/constants.ts";
 import { className, dim, header } from "../ui/format.ts";
 import { withSpinner } from "../ui/spinner.ts";
 import { loadInventoryContext, resolveCharacter, runCommandAction } from "./shared.ts";
+import { assertDestiny2, D1_OPTIMIZER_REASON } from "../games/support.ts";
 
 export function registerOptimizerCommand(program: Command): void {
   const optimizer = program
     .command("optimizer")
-    .description("Analyze loadouts and suggest higher-scoring slot upgrades");
+    .description("Analyze loadouts and suggest higher-scoring slot upgrades")
+    .hook("preAction", () => {
+      assertDestiny2("optimizer", D1_OPTIMIZER_REASON);
+    });
 
   optimizer
     .command("analyze")

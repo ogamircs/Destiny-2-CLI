@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, mock } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
 import { mkdir, rm } from "fs/promises";
 import { join } from "path";
 import type { StoredTokens } from "../../src/services/token-store.ts";
@@ -58,6 +58,7 @@ describe("services/token-store", () => {
   test("saves and loads token payload", async () => {
     await saveTokens(sampleTokens);
     expect(existsSync(tokenPath)).toBe(true);
+    expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
 
     const loaded = loadTokens();
     expect(loaded).not.toBeNull();

@@ -218,6 +218,14 @@ describe("slot:", () => {
     const pred = parseQuery("slot:kinetic");
     expect(pred(makeItem({ slot: "Energy" }), noTags)).toBe(false);
   });
+
+  test("slot aliases match Destiny 1 weapon slot names", () => {
+    expect(parseQuery("slot:primary")(makeItem({ slot: "Primary" }), noTags)).toBe(true);
+    expect(parseQuery("slot:kinetic")(makeItem({ slot: "Primary" }), noTags)).toBe(true);
+    expect(parseQuery("slot:special")(makeItem({ slot: "Special" }), noTags)).toBe(true);
+    expect(parseQuery("slot:heavy")(makeItem({ slot: "Heavy" }), noTags)).toBe(true);
+    expect(parseQuery("slot:primary")(makeItem({ slot: "Kinetic" }), noTags)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

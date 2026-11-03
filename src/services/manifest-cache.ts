@@ -1,13 +1,17 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { join } from "path";
-import { mkdir } from "fs/promises";
+import { mkdir, readdir, rename, rm } from "fs/promises";
 import { getLocalPaths } from "./config.ts";
 import { getManifestInfo, getManifestDbUrl } from "../api/manifest.ts";
+import { getD1ManifestInfo } from "../api/d1/endpoints.ts";
+import { getGame, type GameId } from "../games/context.ts";
+import { definitionDisplayName } from "./definition-name.ts";
 import { ManifestError } from "../utils/errors.ts";
 import { debug } from "../utils/logger.ts";
 
 let db: Database | null = null;
+let openGame: GameId | null = null;
 const VERSION_FILE = "manifest-version.txt";
 
 export interface ManifestItem {
@@ -57,12 +61,21 @@ function toSignedHash(hash: number): number {
   return hash > 0x7fffffff ? hash - 0x100000000 : hash;
 }
 
+function manifestRoot(): string {
+  const root = getLocalPaths().manifestDir;
+  return getGame() === "d1" ? join(root, "d1") : root;
+}
+
 function getDbPath(): string {
-  return join(getLocalPaths().manifestDir, "manifest.sqlite3");
+  return join(manifestRoot(), "manifest.sqlite3");
 }
 
 function getVersionPath(): string {
-  return join(getLocalPaths().manifestDir, VERSION_FILE);
+  return join(manifestRoot(), VERSION_FILE);
+}
+
+async function loadManifestInfo() {
+  return getGame() === "d1" ? getD1ManifestInfo() : getManifestInfo();
 }
 
 async function getCurrentVersion(): Promise<string | null> {
@@ -77,7 +90,7 @@ export async function needsUpdate(): Promise<boolean> {
   if (!existsSync(getDbPath())) return true;
 
   try {
-    const manifest = await getManifestInfo();
+    const manifest = await loadManifestInfo();
     return manifest.version !== currentVersion;
   } catch {
     // If we can't check, use cached version
@@ -86,10 +99,10 @@ export async function needsUpdate(): Promise<boolean> {
 }
 
 export async function updateManifest(): Promise<void> {
-  const config = getLocalPaths();
-  await mkdir(config.manifestDir, { recursive: true });
+  const directory = manifestRoot();
+  await mkdir(directory, { recursive: true });
 
-  const manifest = await getManifestInfo();
+  const manifest = await loadManifestInfo();
   const dbUrl = getManifestDbUrl(manifest);
 
   debug(`Downloading manifest DB from ${dbUrl}`);
@@ -98,45 +111,74 @@ export async function updateManifest(): Promise<void> {
     throw new ManifestError(`Failed to download manifest: ${res.status}`);
   }
 
-  // Bungie serves a zip file containing the SQLite DB
+  // Bungie serves a zip file containing the SQLite DB.
+  // Bun has no built-in unzip, so extract with the system unzip command.
   const zipData = await res.arrayBuffer();
-
-  // The response is actually a zip; we need to extract it
-  // Bun doesn't have built-in zip support, so we'll use a temp file + unzip command
-  const zipPath = join(config.manifestDir, "manifest.zip");
+  const zipPath = join(directory, "manifest.zip");
   await Bun.write(zipPath, zipData);
 
-  const dbPath = getDbPath();
-  // Extract — the zip contains a single .content file
-  const proc = Bun.spawn(
-    ["unzip", "-o", "-j", zipPath, "-d", config.manifestDir],
-    { stdout: "pipe", stderr: "pipe" }
-  );
-  await proc.exited;
-
-  // Find the extracted .content file and rename it
-  const { stdout } = Bun.spawn(["ls", config.manifestDir], {
-    stdout: "pipe",
-  });
-  const files = (await new Response(stdout).text()).split("\n");
-  const contentFile = files.find((f) => f.endsWith(".content"));
-  if (contentFile) {
-    const contentPath = join(config.manifestDir, contentFile);
-    if (contentPath !== dbPath) {
-      Bun.spawn(["mv", contentPath, dbPath]);
-    }
+  try {
+    await extractManifestZip(zipPath, directory, getDbPath());
+  } finally {
+    await rm(zipPath, { force: true });
   }
 
-  // Clean up zip
-  Bun.spawn(["rm", "-f", zipPath]);
-
-  // Save version
+  // Close any handle opened against the previous file before readers reopen it.
+  closeDb();
   await Bun.write(getVersionPath(), manifest.version);
   debug(`Manifest updated to version ${manifest.version}`);
 }
 
+async function extractManifestZip(
+  zipPath: string,
+  manifestDir: string,
+  dbPath: string
+): Promise<void> {
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn(["unzip", "-o", "-j", zipPath, "-d", manifestDir], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch (err) {
+    throw new ManifestError(
+      `The unzip command is required to install the Destiny manifest (${err instanceof Error ? err.message : String(err)}).`
+    );
+  }
+
+  const exitCode = await proc.exited;
+  const stderrPipe = proc.stderr;
+  const stderr =
+    stderrPipe && typeof stderrPipe !== "number"
+      ? (await new Response(stderrPipe).text()).trim()
+      : "";
+  if (exitCode !== 0) {
+    throw new ManifestError(
+      `Failed to extract manifest (unzip exit ${exitCode})${stderr ? `: ${stderr}` : ""}`
+    );
+  }
+
+  const files = await readdir(manifestDir);
+  const contentFile = files.find((file) => file.endsWith(".content"));
+  if (!contentFile) {
+    throw new ManifestError("Manifest zip did not contain a .content database");
+  }
+
+  const contentPath = join(manifestDir, contentFile);
+  if (contentPath !== dbPath) {
+    await rename(contentPath, dbPath);
+  }
+}
+
 function getDb(): Database {
-  if (db) return db;
+  const game = getGame();
+  if (db && openGame === game) return db;
+  if (db) {
+    db.close();
+    db = null;
+    plugSetCache = new Map();
+    plugPerkCache = new Map();
+  }
   const dbPath = getDbPath();
   if (!existsSync(dbPath)) {
     throw new ManifestError(
@@ -144,7 +186,107 @@ function getDb(): Database {
     );
   }
   db = new Database(dbPath, { readonly: true });
+  openGame = game;
   return db;
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function recordField(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+export function readManifestItem(
+  data: Record<string, unknown>,
+  game: GameId = getGame()
+): ManifestItem {
+  const display = recordField(data.displayProperties);
+  const inventory = recordField(data.inventory);
+  const classType = numberField(data.classType) ?? -1;
+  return {
+    hash: numberField(data.hash) ?? numberField(data.itemHash) ?? 0,
+    name: stringField(display?.name) || stringField(data.itemName) || "Unknown",
+    itemType: numberField(data.itemType) ?? 0,
+    itemSubType: numberField(data.itemSubType) ?? 0,
+    tierTypeName:
+      stringField(inventory?.tierTypeName) || stringField(data.tierTypeName) || "Common",
+    bucketHash: numberField(inventory?.bucketTypeHash) ?? numberField(data.bucketTypeHash) ?? 0,
+    classType: game === "d1" && classType === 3 ? -1 : classType,
+    icon: stringField(display?.icon) || stringField(data.icon),
+    maxStackSize: numberField(inventory?.maxStackSize) ?? numberField(data.maxStackSize) ?? 1,
+    nonTransferrable: data.nonTransferrable === true,
+    equippable: data.equippable === true,
+  };
+}
+
+const MANIFEST_NAME_TABLES = new Set([
+  "DestinyProgressionDefinition",
+  "DestinyRecordBookDefinition",
+  "DestinyInventoryItemDefinition",
+  "DestinyVendorDefinition",
+  "DestinyFactionDefinition",
+]);
+
+let factionNameByProgression: Map<number, string> | null = null;
+
+export function lookupManifestName(table: string, hash: number): string | null {
+  if (!MANIFEST_NAME_TABLES.has(table)) {
+    throw new Error(`Refusing to query unexpected manifest table ${table}`);
+  }
+  try {
+    const database = getDb();
+    const row = database
+      .query(`SELECT json FROM ${table} WHERE id = ?`)
+      .get(toSignedHash(hash)) as ManifestJsonRow | null;
+    if (!row) return null;
+    return definitionDisplayName(JSON.parse(row.json) as Record<string, unknown>);
+  } catch {
+    return null;
+  }
+}
+
+export function lookupVendorDisplayItemHash(vendorHash: number): number | null {
+  try {
+    const database = getDb();
+    const row = database
+      .query("SELECT json FROM DestinyVendorDefinition WHERE id = ?")
+      .get(toSignedHash(vendorHash)) as ManifestJsonRow | null;
+    if (!row) return null;
+    const data = JSON.parse(row.json) as Record<string, unknown>;
+    const displayItemHash = numberField(data.displayItemHash);
+    return displayItemHash && displayItemHash > 0 ? displayItemHash : null;
+  } catch {
+    return null;
+  }
+}
+
+export function lookupFactionNameForProgression(progressionHash: number): string | null {
+  try {
+    if (!factionNameByProgression) {
+      factionNameByProgression = new Map();
+      const database = getDb();
+      const rows = database
+        .query("SELECT json FROM DestinyFactionDefinition")
+        .all() as ManifestJsonRow[];
+      for (const row of rows) {
+        const data = JSON.parse(row.json) as Record<string, unknown>;
+        const name = definitionDisplayName(data);
+        const linked = numberField(data.progressionHash);
+        if (!name || linked === undefined) continue;
+        factionNameByProgression.set(linked, name);
+      }
+    }
+    return factionNameByProgression.get(progressionHash) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function ensureManifest(): Promise<void> {
@@ -167,20 +309,7 @@ export function lookupItem(hash: number): ManifestItem | null {
     return null;
   }
 
-  const data = JSON.parse(row.json);
-  return {
-    hash: data.hash,
-    name: data.displayProperties?.name || "Unknown",
-    itemType: data.itemType || 0,
-    itemSubType: data.itemSubType || 0,
-    tierTypeName: data.inventory?.tierTypeName || "Common",
-    bucketHash: data.inventory?.bucketTypeHash || 0,
-    classType: data.classType ?? -1,
-    icon: data.displayProperties?.icon || "",
-    maxStackSize: data.inventory?.maxStackSize || 1,
-    nonTransferrable: data.nonTransferrable || false,
-    equippable: data.equippable || false,
-  };
+  return readManifestItem(JSON.parse(row.json) as Record<string, unknown>);
 }
 
 export function lookupBucket(hash: number): ManifestBucket | null {
@@ -195,11 +324,12 @@ export function lookupBucket(hash: number): ManifestBucket | null {
 
   if (!row) return null;
 
-  const data = JSON.parse(row.json);
+  const data = JSON.parse(row.json) as Record<string, unknown>;
+  const display = recordField(data.displayProperties);
   return {
-    hash: data.hash,
-    name: data.displayProperties?.name || "Unknown",
-    category: data.category || 0,
+    hash: numberField(data.hash) ?? numberField(data.bucketHash) ?? hash,
+    name: stringField(display?.name) || stringField(data.bucketName) || "Unknown",
+    category: numberField(data.category) ?? 0,
   };
 }
 
@@ -213,11 +343,19 @@ export function lookupPerk(hash: number): ManifestPerk | null {
 
   if (!row) return null;
 
-  const data = JSON.parse(row.json);
+  const data = JSON.parse(row.json) as Record<string, unknown>;
+  const display = recordField(data.displayProperties);
   return {
-    hash: data.hash,
-    name: data.displayProperties?.name || "Unknown Perk",
-    description: data.displayProperties?.description || "",
+    hash: numberField(data.hash) ?? numberField(data.perkHash) ?? hash,
+    name:
+      stringField(display?.name) ||
+      stringField(data.perkName) ||
+      stringField(data.displayName) ||
+      "Unknown Perk",
+    description:
+      stringField(display?.description) ||
+      stringField(data.perkDescription) ||
+      stringField(data.displayDescription),
   };
 }
 
@@ -231,22 +369,9 @@ export function searchItems(query: string): ManifestItem[] {
   const results: ManifestItem[] = [];
 
   for (const row of rows) {
-    const data = JSON.parse(row.json);
-    const name = (data.displayProperties?.name || "").toLowerCase();
-    if (name.includes(lowerQuery) && data.itemType !== 0) {
-      results.push({
-        hash: data.hash,
-        name: data.displayProperties?.name || "Unknown",
-        itemType: data.itemType || 0,
-        itemSubType: data.itemSubType || 0,
-        tierTypeName: data.inventory?.tierTypeName || "Common",
-        bucketHash: data.inventory?.bucketTypeHash || 0,
-        classType: data.classType ?? -1,
-        icon: data.displayProperties?.icon || "",
-        maxStackSize: data.inventory?.maxStackSize || 1,
-        nonTransferrable: data.nonTransferrable || false,
-        equippable: data.equippable || false,
-      });
+    const item = readManifestItem(JSON.parse(row.json) as Record<string, unknown>);
+    if (item.name.toLowerCase().includes(lowerQuery) && item.itemType !== 0) {
+      results.push(item);
     }
   }
 
@@ -267,15 +392,23 @@ export function searchPerks(query: string): ManifestPerk[] {
   const results: ManifestPerk[] = [];
 
   for (const row of rows) {
-    const data = JSON.parse(row.json);
-    const name = (data.displayProperties?.name || "").trim();
+    const data = JSON.parse(row.json) as Record<string, unknown>;
+    const display = recordField(data.displayProperties);
+    const name = (
+      stringField(display?.name) ||
+      stringField(data.perkName) ||
+      stringField(data.displayName)
+    ).trim();
     if (!name) continue;
     if (!name.toLowerCase().includes(lowerQuery)) continue;
 
     results.push({
-      hash: data.hash,
+      hash: numberField(data.hash) ?? numberField(data.perkHash) ?? 0,
       name,
-      description: data.displayProperties?.description || "",
+      description:
+        stringField(display?.description) ||
+        stringField(data.perkDescription) ||
+        stringField(data.displayDescription),
     });
   }
 
@@ -480,6 +613,8 @@ export function closeDb() {
     db.close();
     db = null;
   }
+  openGame = null;
+  factionNameByProgression = null;
   plugSetCache = new Map<number, number[]>();
   plugPerkCache = new Map<number, number[]>();
 }

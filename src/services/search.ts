@@ -1,4 +1,5 @@
 import type { IndexedItem } from "./item-index.ts";
+import { slotsMatch } from "../utils/slots.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,7 +52,7 @@ function buildTermPredicate(term: string): ItemPredicate {
   } else if (qualifier === "tag") {
     pred = (_item, tags) => tags.includes(value);
   } else if (qualifier === "slot") {
-    pred = (item) => item.slot.toLowerCase() === value;
+    pred = (item) => slotsMatch(item.slot, value);
   } else if (qualifier === "tier") {
     pred = (item) => item.tier.toLowerCase() === value;
   } else if (qualifier === "power") {

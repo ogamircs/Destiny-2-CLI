@@ -1,6 +1,8 @@
 import { Command } from "commander";
 import { getProfile, type CharacterData } from "../api/profile.ts";
 import { getAccountStats, ActivityMode } from "../api/stats.ts";
+import { getD1AccountStats } from "../api/d1/stats.ts";
+import { getGame } from "../games/context.ts";
 import { DestinyComponentType } from "../utils/constants.ts";
 import { renderStatsTable, formatStatValue, type StatRow } from "../ui/tables.ts";
 import { withSpinner } from "../ui/spinner.ts";
@@ -99,7 +101,7 @@ function extractStats(
 export function registerStatsCommand(program: Command) {
   program
     .command("stats")
-    .description("View your Destiny 2 stats")
+    .description("View historical account stats")
     .option(
       "-m, --mode <mode>",
       "Activity mode: pvp, pve, raid, strikes, gambit, trials, ironbanner, dungeon, nightfall",
@@ -110,7 +112,7 @@ export function registerStatsCommand(program: Command) {
     .action(async (opts) => {
       try {
         const modes: number[] = [];
-        if (opts.mode && opts.mode !== "all") {
+        if (getGame() !== "d1" && opts.mode && opts.mode !== "all") {
           const mode = MODE_MAP[opts.mode.toLowerCase()];
           if (mode === undefined) {
             console.log(
@@ -124,7 +126,9 @@ export function registerStatsCommand(program: Command) {
         }
 
         const [accountStats, profile] = await Promise.all([
-          withSpinner("Fetching stats...", () => getAccountStats(modes)),
+          withSpinner("Fetching stats...", () =>
+            getGame() === "d1" ? getD1AccountStats(opts.mode) : getAccountStats(modes)
+          ),
           getProfile([DestinyComponentType.Characters]),
         ]);
 
@@ -148,6 +152,8 @@ export function registerStatsCommand(program: Command) {
           ironbanner: "ironBanner",
           dungeon: "dungeon",
           nightfall: "scored_nightfall",
+          story: "story",
+          patrol: "patrol",
           all: "allTime",
         };
 

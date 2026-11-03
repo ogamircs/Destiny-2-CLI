@@ -9,6 +9,7 @@ const apiRequestMock = mock(async () => undefined);
 
 mock.module("../../src/services/token-store.ts", () => ({
   loadTokens: () => tokens,
+  saveTokens: async () => {},
 }));
 
 mock.module("../../src/api/client.ts", () => ({

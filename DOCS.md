@@ -1,4 +1,4 @@
-# Destiny 2 CLI — Command Reference
+# Destiny CLI — Command Reference
 
 ## Global Flags
 
@@ -7,6 +7,8 @@ These flags work with any command.
 | Flag | Description |
 |------|-------------|
 | `--verbose` | Print debug output (API calls, token refresh, etc.) |
+| `--game <d1\|d2>` | Game to query. Destiny 2 is the default. `DESTINY_GAME` is used when the flag is omitted. |
+| `--platform <xbox\|psn>` | Destiny 1 console when the account has both Xbox and PlayStation memberships. |
 | `--version` | Print CLI version |
 | `--help` | Print help for any command |
 
@@ -14,7 +16,28 @@ These flags work with any command.
 destiny --help
 destiny <command> --help
 destiny --verbose inventory --vault
+destiny --game d1 characters
+destiny inventory --game d1 --platform psn
 ```
+
+`--game`, `--platform`, and `--verbose` may appear before or after the command name.
+
+## Destiny 1
+
+`--game d1` sends commands to `https://www.bungie.net/d1/Platform`. Destiny 2 behavior is unchanged when the flag is omitted.
+
+Supported: `characters`, `inventory`, `search`, `tag`, `note`, `compare`, `organize`, `armory`, `transfer`, `equip`, `farming`, `loadout`, `stats`, `progress`, `records`, and advisor output from `vendors`.
+
+Not supported:
+
+- `rolls` and `optimizer` depend on Destiny 2 sockets, DIM wishlist hashes, and the six armor stats.
+- `vendors` cannot list sale items. Bungie retired `MyAccount/Character/{id}/Vendors/`. The command lists advisor activities instead.
+- `stats --mode gambit` and `stats --mode dungeon` are Destiny 2 modes.
+- Guardian Rank, artifact bonus, seasonal power cap, and triumph seals are not part of Destiny 1.
+
+Destiny 1 requires an Xbox or PlayStation membership. Tags, notes, loadouts, saved searches, and farming sessions are stored separately from Destiny 2 data. The manifest cache lives in `~/.cache/destiny-cli/d1/`.
+
+Full usage and the reason each gap exists are in the README section **Destiny 1**.
 
 ---
 

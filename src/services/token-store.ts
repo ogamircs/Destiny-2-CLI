@@ -1,7 +1,13 @@
 import { existsSync, readFileSync } from "fs";
-import { unlink } from "fs/promises";
+import { chmod, unlink } from "fs/promises";
 import { getLocalPaths } from "./config.ts";
 import { debug } from "../utils/logger.ts";
+
+export interface LinkedMembership {
+  membershipType: number;
+  membershipId: string;
+  displayName: string;
+}
 
 export interface StoredTokens {
   accessToken: string;
@@ -13,6 +19,8 @@ export interface StoredTokens {
   destinyMembershipId: string;
   destinyMembershipType: number;
   displayName: string;
+  /** Every Destiny membership linked at login. Absent on tokens saved by older builds. */
+  memberships?: LinkedMembership[];
 }
 
 // Simple obfuscation key derived from machine-specific data.
@@ -47,6 +55,7 @@ export async function saveTokens(tokens: StoredTokens): Promise<void> {
   const json = JSON.stringify(tokens);
   const encrypted = xorObfuscate(json, key);
   await Bun.write(config.tokenPath, encrypted);
+  await chmod(config.tokenPath, 0o600);
   debug("Tokens saved to", config.tokenPath);
 }
 

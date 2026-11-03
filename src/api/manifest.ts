@@ -1,7 +1,7 @@
 import { apiRequest } from "./client.ts";
 import { debug } from "../utils/logger.ts";
 
-interface ManifestResponse {
+export interface ManifestResponse {
   version: string;
   mobileWorldContentPaths: Record<string, string>;
 }

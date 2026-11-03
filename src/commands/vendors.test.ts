@@ -105,6 +105,17 @@ async function setupVendorsCommandTest() {
   mock.module("../ui/spinner.ts", () => ({
     withSpinner: withSpinnerMock,
   }));
+  mock.module("../services/manifest-cache.ts", () => ({
+    ensureManifest: async () => {},
+    lookupManifestName: (_table: string, hash: number) => {
+      if (hash === 2190858386) return "Banshee-44";
+      if (hash === 999) return "Ada-1";
+      return null;
+    },
+    lookupFactionNameForProgression: () => null,
+    lookupVendorDisplayItemHash: (hash: number) =>
+      hash === 3361454721 ? 999 : null,
+  }));
 
   const { registerVendorsCommand } = await import(
     `./vendors.ts?test=${Date.now()}-${Math.random()}`
@@ -173,9 +184,13 @@ describe("vendors command", () => {
     });
     expect(output.vendors[0]).toMatchObject({
       vendorHash: 2190858386,
+      vendorLabel: "Banshee-44",
       categoryCount: 3,
       saleItemCount: 5,
       enabledOn: 2,
     });
+    expect(output.vendors.some((vendor: { vendorLabel: string }) => vendor.vendorLabel === "Ada-1")).toBe(
+      true
+    );
   });
 });

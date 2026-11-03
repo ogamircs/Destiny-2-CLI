@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { mkdirSync } from "fs";
 import { getLocalPaths } from "./config.ts";
+import { getGame } from "../games/context.ts";
 import { debug } from "../utils/logger.ts";
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,34 @@ CREATE TABLE IF NOT EXISTS roll_source (
   cache_updated_at INTEGER
 );
   `.trim(),
+  // Migration 2 — keep Destiny 1 and Destiny 2 metadata from colliding.
+  `
+CREATE TABLE loadouts_v2 (
+  name        TEXT    NOT NULL,
+  game        TEXT    NOT NULL DEFAULT 'd2',
+  class_type  INTEGER NOT NULL,
+  items_json  TEXT    NOT NULL,
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (name, game)
+);
+INSERT INTO loadouts_v2 (name, game, class_type, items_json, created_at, updated_at)
+SELECT name, 'd2', class_type, items_json, created_at, updated_at FROM loadouts;
+DROP TABLE loadouts;
+ALTER TABLE loadouts_v2 RENAME TO loadouts;
+
+CREATE TABLE saved_searches_v2 (
+  name       TEXT    NOT NULL,
+  game       TEXT    NOT NULL DEFAULT 'd2',
+  query      TEXT    NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (name, game)
+);
+INSERT INTO saved_searches_v2 (name, game, query, created_at)
+SELECT name, 'd2', query, created_at FROM saved_searches;
+DROP TABLE saved_searches;
+ALTER TABLE saved_searches_v2 RENAME TO saved_searches;
+  `.trim(),
 ];
 
 function runMigrations(database: Database): void {
@@ -163,7 +192,8 @@ export function itemKey(item: {
   instanceId: string | undefined;
   hash: number;
 }): string {
-  return item.instanceId ?? `hash:${item.hash}`;
+  const base = item.instanceId ?? `hash:${item.hash}`;
+  return getGame() === "d1" ? `d1:${base}` : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,17 +285,19 @@ export function getNote(item: {
 
 export function saveLoadout(loadout: Loadout): void {
   const db = openLocalDb();
+  const game = getGame();
   const existing = db
-    .query("SELECT created_at FROM loadouts WHERE name = ?")
-    .get(loadout.name) as { created_at: number } | null;
+    .query("SELECT created_at FROM loadouts WHERE name = ? AND game = ?")
+    .get(loadout.name, game) as { created_at: number } | null;
 
   const createdAt = existing?.created_at ?? loadout.createdAt;
 
   db.query(
-    `INSERT OR REPLACE INTO loadouts (name, class_type, items_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, unixepoch())`
+    `INSERT OR REPLACE INTO loadouts (name, game, class_type, items_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, unixepoch())`
   ).run(
     loadout.name,
+    game,
     loadout.classType,
     JSON.stringify(loadout.items),
     createdAt
@@ -276,9 +308,9 @@ export function getLoadout(name: string): Loadout | null {
   const db = openLocalDb();
   const row = db
     .query(
-      "SELECT name, class_type, items_json, created_at, updated_at FROM loadouts WHERE name = ?"
+      "SELECT name, class_type, items_json, created_at, updated_at FROM loadouts WHERE name = ? AND game = ?"
     )
-    .get(name) as {
+    .get(name, getGame()) as {
     name: string;
     class_type: number;
     items_json: string;
@@ -301,9 +333,9 @@ export function listLoadouts(): Loadout[] {
   const db = openLocalDb();
   const rows = db
     .query(
-      "SELECT name, class_type, items_json, created_at, updated_at FROM loadouts ORDER BY name"
+      "SELECT name, class_type, items_json, created_at, updated_at FROM loadouts WHERE game = ? ORDER BY name"
     )
-    .all() as {
+    .all(getGame()) as {
     name: string;
     class_type: number;
     items_json: string;
@@ -322,7 +354,7 @@ export function listLoadouts(): Loadout[] {
 
 export function deleteLoadout(name: string): void {
   const db = openLocalDb();
-  db.query("DELETE FROM loadouts WHERE name = ?").run(name);
+  db.query("DELETE FROM loadouts WHERE name = ? AND game = ?").run(name, getGame());
 }
 
 // ---------------------------------------------------------------------------
@@ -332,18 +364,18 @@ export function deleteLoadout(name: string): void {
 export function saveSearch(name: string, query: string): void {
   const db = openLocalDb();
   db.query(
-    `INSERT OR REPLACE INTO saved_searches (name, query, created_at)
-     VALUES (?, ?, unixepoch())`
-  ).run(name, query);
+    `INSERT OR REPLACE INTO saved_searches (name, game, query, created_at)
+     VALUES (?, ?, ?, unixepoch())`
+  ).run(name, getGame(), query);
 }
 
 export function listSearches(): SavedSearch[] {
   const db = openLocalDb();
   const rows = db
     .query(
-      "SELECT name, query, created_at FROM saved_searches ORDER BY name"
+      "SELECT name, query, created_at FROM saved_searches WHERE game = ? ORDER BY name"
     )
-    .all() as { name: string; query: string; created_at: number }[];
+    .all(getGame()) as { name: string; query: string; created_at: number }[];
   return rows.map((r) => ({
     name: r.name,
     query: r.query,
@@ -353,7 +385,7 @@ export function listSearches(): SavedSearch[] {
 
 export function deleteSearch(name: string): void {
   const db = openLocalDb();
-  db.query("DELETE FROM saved_searches WHERE name = ?").run(name);
+  db.query("DELETE FROM saved_searches WHERE name = ? AND game = ?").run(name, getGame());
 }
 
 // ---------------------------------------------------------------------------

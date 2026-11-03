@@ -1,12 +1,20 @@
-import { AUTH_URL, OAUTH_CALLBACK_PORT, API_BASE } from "../utils/constants.ts";
+import { OAUTH_CALLBACK_PORT, API_BASE } from "../utils/constants.ts";
 import { getConfig, getLocalPaths, ensureDirs } from "./config.ts";
-import { saveTokens, type StoredTokens } from "./token-store.ts";
+import { saveTokens, type LinkedMembership, type StoredTokens } from "./token-store.ts";
 import { exchangeCode } from "../api/auth.ts";
+import {
+  assertOAuthState,
+  buildAuthorizeUrl,
+  createOAuthState,
+  escapeHtml,
+  oauthTimeoutMs,
+} from "./oauth.ts";
 import { AuthError } from "../utils/errors.ts";
 import { debug } from "../utils/logger.ts";
 import open from "open";
 import { join } from "path";
 import { existsSync } from "fs";
+import { chmod } from "fs/promises";
 import { $ } from "bun";
 
 const CALLBACK_URL = `https://localhost:${OAUTH_CALLBACK_PORT}/callback`;
@@ -33,6 +41,7 @@ async function ensureTlsCert(): Promise<{ cert: string; key: string }> {
   if (!existsSync(certPath) || !existsSync(keyPath)) {
     debug("Generating self-signed TLS cert for localhost...");
     await $`openssl req -x509 -newkey rsa:2048 -keyout ${keyPath} -out ${certPath} -days 3650 -nodes -subj "/CN=localhost" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"`.quiet();
+    await chmod(keyPath, 0o600);
   }
 
   return {
@@ -46,14 +55,26 @@ export async function login(): Promise<StoredTokens> {
   await ensureDirs();
 
   const tls = await ensureTlsCert();
-  const authUrl = `${AUTH_URL}?client_id=${config.clientId}&response_type=code`;
+  const oauthState = createOAuthState();
+  const authUrl = buildAuthorizeUrl(config.clientId, oauthState);
+
+  const timeoutMs = oauthTimeoutMs();
+  console.log(`\n  Open this URL to authorize:\n  ${authUrl}\n`);
+  console.log("  Waiting for the Bungie callback.");
+  console.log("  If the browser shows a security warning, click Advanced → Proceed to localhost.");
+  console.log(`  This login times out after ${Math.round(timeoutMs / 1000)}s.`);
+  console.log("  Override it with DESTINY_OAUTH_TIMEOUT_MS.\n");
 
   return new Promise<StoredTokens>((resolve, reject) => {
     let server: ReturnType<typeof Bun.serve>;
     const timeout = setTimeout(() => {
       server?.stop();
-      reject(new AuthError("OAuth flow timed out after 120 seconds"));
-    }, 120_000);
+      reject(
+        new AuthError(
+          `OAuth flow timed out after ${Math.round(timeoutMs / 1000)} seconds`
+        )
+      );
+    }, timeoutMs);
 
     server = Bun.serve({
       port: OAUTH_CALLBACK_PORT,
@@ -67,6 +88,15 @@ export async function login(): Promise<StoredTokens> {
         const code = url.searchParams.get("code");
         if (!code) {
           return new Response("Missing authorization code", { status: 400 });
+        }
+
+        try {
+          assertOAuthState(oauthState, url.searchParams.get("state"));
+        } catch (err) {
+          clearTimeout(timeout);
+          server.stop();
+          reject(err);
+          return new Response("Authentication failed", { status: 400 });
         }
 
         try {
@@ -113,6 +143,13 @@ export async function login(): Promise<StoredTokens> {
             throw new AuthError("No Destiny memberships found on this account");
           }
 
+          const linked: LinkedMembership[] = membershipData.destinyMemberships.map((membership) => ({
+            membershipType: membership.membershipType,
+            membershipId: membership.membershipId,
+            displayName:
+              membership.displayName || membershipData.bungieNetUser.displayName,
+          }));
+
           const tokens: StoredTokens = {
             accessToken: tokenRes.access_token,
             refreshToken: tokenRes.refresh_token,
@@ -125,6 +162,7 @@ export async function login(): Promise<StoredTokens> {
             displayName:
               primary.displayName ||
               membershipData.bungieNetUser.displayName,
+            memberships: linked,
           };
 
           await saveTokens(tokens);
@@ -135,7 +173,7 @@ export async function login(): Promise<StoredTokens> {
           return new Response(
             `<html><body style="font-family:system-ui;text-align:center;padding:60px;background:#0d0d0d;color:#fff">
               <h1 style="color:#c5a84e">✓ Logged in!</h1>
-              <p>Welcome, ${tokens.displayName}. You can close this tab and return to the terminal.</p>
+              <p>Welcome, ${escapeHtml(tokens.displayName)}. You can close this tab and return to the terminal.</p>
             </body></html>`,
             { headers: { "Content-Type": "text/html" } }
           );
@@ -149,8 +187,9 @@ export async function login(): Promise<StoredTokens> {
     });
 
     debug(`OAuth callback server listening on ${CALLBACK_URL}`);
-    console.log(`\n  Opening browser for Bungie authorization...`);
-    console.log(`  (If the browser shows a security warning, click Advanced → Proceed to localhost)\n`);
-    open(authUrl);
+    void Promise.resolve(open(authUrl)).catch((err: unknown) => {
+      debug("Could not open a browser:", err);
+      console.log("  Could not open a browser. Use the URL above.");
+    });
   });
 }
