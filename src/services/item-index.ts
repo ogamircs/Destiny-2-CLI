@@ -1,5 +1,6 @@
 import { lookupItem } from "./manifest-cache.ts";
-import { BUCKET_SLOT_NAMES, DestinyComponentType } from "../utils/constants.ts";
+import { DestinyComponentType } from "../utils/constants.ts";
+import { slotNameForBucket } from "../utils/slots.ts";
 import { debug } from "../utils/logger.ts";
 import type { ProfileResponse, CharacterData } from "../api/profile.ts";
 
@@ -87,8 +88,8 @@ export function buildInventoryIndex(
     const instance = instanceId ? instances[instanceId] : undefined;
 
     const slot =
-      BUCKET_SLOT_NAMES[rawItem.bucketHash] ??
-      BUCKET_SLOT_NAMES[def.bucketHash] ??
+      slotNameForBucket(rawItem.bucketHash) ??
+      slotNameForBucket(def.bucketHash) ??
       "Other";
 
     const indexed: IndexedItem = {

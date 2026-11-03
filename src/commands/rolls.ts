@@ -13,6 +13,7 @@ import { DestinyComponentType } from "../utils/constants.ts";
 import { className, dim, error, header, success } from "../ui/format.ts";
 import { formatError } from "../utils/errors.ts";
 import { withSpinner } from "../ui/spinner.ts";
+import { assertDestiny2, D1_ROLLS_REASON } from "../games/support.ts";
 
 // ---------------------------------------------------------------------------
 // Grade formatting
@@ -168,7 +169,10 @@ function deterministicFinderScore(tier: string): number {
 export function registerRollsCommand(program: Command) {
   const rolls = program
     .command("rolls")
-    .description("Appraise and discover weapon rolls");
+    .description("Appraise and discover weapon rolls")
+    .hook("preAction", () => {
+      assertDestiny2("rolls", D1_ROLLS_REASON);
+    });
 
   const source = rolls
     .command("source")

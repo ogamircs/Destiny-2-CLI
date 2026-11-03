@@ -6,6 +6,9 @@ import { withSpinner } from "../ui/spinner.ts";
 import { error, header } from "../ui/format.ts";
 import { formatError } from "../utils/errors.ts";
 import { buildProgressReport } from "../services/progression.ts";
+import { loadD1ProgressReport } from "../services/d1-views.ts";
+import { ensureManifest } from "../services/manifest-cache.ts";
+import { getGame } from "../games/context.ts";
 
 const PROFILE_PROGRESSION_COMPONENT = 104;
 
@@ -16,6 +19,30 @@ export function registerProgressCommand(program: Command) {
     .option("--json", "Output as JSON")
     .action(async (opts) => {
       try {
+        if (getGame() === "d1") {
+          await withSpinner("Loading manifest...", () => ensureManifest());
+          const report = await withSpinner("Fetching Destiny 1 progression...", () =>
+            loadD1ProgressReport()
+          );
+          if (opts.json) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          console.log(header("\nDestiny 1 Progression"));
+          console.log(`Grimoire: ${report.grimoireScore}`);
+          for (const character of report.characters) {
+            console.log(
+              `${character.className}: light ${character.light}, level ${character.level}`
+            );
+            for (const progression of character.progressions) {
+              console.log(
+                `  ${progression.name}: level ${progression.level} (${progression.progress})`
+              );
+            }
+          }
+          return;
+        }
+
         const profile = (await withSpinner("Fetching progression...", () =>
           getProfile([
             DestinyComponentType.Profiles,

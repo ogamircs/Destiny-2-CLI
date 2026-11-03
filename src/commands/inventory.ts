@@ -8,6 +8,7 @@ import {
   runCommandAction,
   toDisplayItem,
 } from "./shared.ts";
+import { slotsMatch } from "../utils/slots.ts";
 
 function groupByLocation(items: DisplayItem[]): Map<string, DisplayItem[]> {
   const byLocation = new Map<string, DisplayItem[]>();
@@ -46,7 +47,7 @@ export function registerInventoryCommand(program: Command) {
 
       if (opts.slot) {
         const slotLower = opts.slot.toLowerCase();
-        items = items.filter((item) => item.slot.toLowerCase() === slotLower);
+        items = items.filter((item) => slotsMatch(item.slot, slotLower));
       }
 
       if (opts.search) {

@@ -6,6 +6,9 @@ import { withSpinner } from "../ui/spinner.ts";
 import { error, header } from "../ui/format.ts";
 import { formatError } from "../utils/errors.ts";
 import { buildRecordsReport } from "../services/progression.ts";
+import { loadD1RecordsReport } from "../services/d1-views.ts";
+import { ensureManifest } from "../services/manifest-cache.ts";
+import { getGame } from "../games/context.ts";
 
 const CHARACTER_RECORDS_COMPONENT = 900;
 const PROFILE_RECORDS_COMPONENT = 901;
@@ -18,6 +21,34 @@ export function registerRecordsCommand(program: Command) {
     .option("--json", "Output as JSON")
     .action(async (opts) => {
       try {
+        if (getGame() === "d1") {
+          await withSpinner("Loading manifest...", () => ensureManifest());
+          const report = await withSpinner("Fetching Grimoire...", () => loadD1RecordsReport());
+          if (opts.json) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          console.log(header("\nDestiny 1 Records"));
+          console.log(`Grimoire score: ${report.grimoireScore}`);
+          console.log(
+            report.cardCount === null
+              ? "Grimoire cards: unavailable"
+              : `Grimoire cards: ${report.cardCount}`
+          );
+          if (report.books.length === 0) {
+            console.log("Record books: none returned");
+          } else {
+            for (const book of report.books) {
+              const percent = book.percent === null ? "" : ` (${book.percent}%)`;
+              console.log(`${book.name}: ${book.completed} complete${percent}`);
+            }
+          }
+          console.log(
+            "Destiny 1 has Grimoire cards and record books. Triumphs and seals are Destiny 2."
+          );
+          return;
+        }
+
         const profile = (await withSpinner("Fetching records...", () =>
           getProfile([
             DestinyComponentType.Characters,

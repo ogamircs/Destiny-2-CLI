@@ -10,6 +10,8 @@ import { withSpinner } from "../ui/spinner.ts";
 import { error, header } from "../ui/format.ts";
 import { formatError } from "../utils/errors.ts";
 import { buildVendorsReport } from "../services/progression.ts";
+import { loadD1Advisors } from "../services/d1-views.ts";
+import { getGame } from "../games/context.ts";
 
 const VENDOR_COMPONENTS = [
   VendorComponentType.Vendors,
@@ -24,6 +26,34 @@ export function registerVendorsCommand(program: Command) {
     .option("--json", "Output as JSON")
     .action(async (opts) => {
       try {
+        if (getGame() === "d1") {
+          const advisors = await withSpinner("Fetching Destiny 1 advisors...", () =>
+            loadD1Advisors()
+          );
+          if (opts.json) {
+            console.log(JSON.stringify({ advisors }, null, 2));
+            return;
+          }
+          console.log(header("\nDestiny 1 Advisors"));
+          console.log(
+            "The Destiny 1 vendor inventory endpoint is retired, so this lists advisor activities instead."
+          );
+          for (const character of advisors) {
+            console.log(header(`\n${character.className}`));
+            if (character.activities.length === 0) {
+              console.log("No advisor activities returned.");
+              continue;
+            }
+            for (const activity of character.activities) {
+              const state =
+                activity.active === null ? "" : activity.active ? " [active]" : " [inactive]";
+              console.log(`${activity.name}${state}`);
+              if (activity.about) console.log(`  ${activity.about}`);
+            }
+          }
+          return;
+        }
+
         const profile = await withSpinner("Fetching characters...", () =>
           getProfile([DestinyComponentType.Characters])
         );

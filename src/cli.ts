@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { setVerbose } from "./utils/logger.ts";
+import { parseGame, parsePlatform, setGame, setPlatformOverride } from "./games/context.ts";
 import { registerAuthCommands } from "./commands/auth.ts";
 import { registerCharactersCommand } from "./commands/characters.ts";
 import { registerInventoryCommand } from "./commands/inventory.ts";
@@ -26,14 +27,25 @@ export function createProgram(): Command {
 
   program
     .name("destiny")
-    .description("Destiny 2 CLI — manage your inventory from the terminal")
+    .description("Destiny CLI — Destiny 2 by default, Destiny 1 with --game d1")
     .version("0.1.0")
     .option("--verbose", "Enable debug logging")
+    .option("--game <game>", "Game to query: d2 (default) or d1")
+    .option(
+      "--platform <platform>",
+      "Destiny 1 platform when both Xbox and PlayStation are linked: xbox or psn"
+    )
     .hook("preAction", (thisCommand) => {
       const opts = thisCommand.optsWithGlobals();
       if (opts.verbose) {
         setVerbose(true);
       }
+      const requestedGame =
+        typeof opts.game === "string" ? opts.game : process.env.DESTINY_GAME;
+      setGame(requestedGame ? parseGame(requestedGame) : "d2");
+      setPlatformOverride(
+        typeof opts.platform === "string" ? parsePlatform(opts.platform) : undefined
+      );
     });
 
   registerAuthCommands(program);

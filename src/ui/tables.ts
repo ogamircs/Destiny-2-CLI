@@ -15,12 +15,16 @@ export interface DisplayItem {
   location: string; // character name or "Vault"
 }
 
-export function renderCharacterTable(characters: CharacterData[], guardianRank?: number) {
+export function renderCharacterTable(
+  characters: CharacterData[],
+  guardianRank?: number,
+  options: { lightColumn?: boolean } = {}
+) {
   const table = new Table({
     head: [
       chalk.bold("Class"),
       chalk.bold("Race/Gender"),
-      chalk.bold("Rank"),
+      chalk.bold(options.lightColumn ? "Light" : "Rank"),
       chalk.bold("Last Played"),
       chalk.bold("Time Played"),
     ],
@@ -28,10 +32,15 @@ export function renderCharacterTable(characters: CharacterData[], guardianRank?:
   });
 
   for (const char of characters) {
+    const third = options.lightColumn
+      ? chalk.cyan(String(char.light))
+      : guardianRank !== undefined
+        ? chalk.cyan(`Rank ${guardianRank}`)
+        : chalk.dim("—");
     table.push([
       chalk.bold(className(char.classType)),
       `${raceName(char.raceType)} ${genderName(char.genderType)}`,
-      guardianRank !== undefined ? chalk.cyan(`Rank ${guardianRank}`) : chalk.dim("—"),
+      third,
       timeSince(char.dateLastPlayed),
       `${Math.floor(parseInt(char.minutesPlayedTotal) / 60)}h`,
     ]);

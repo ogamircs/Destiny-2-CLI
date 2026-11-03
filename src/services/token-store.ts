@@ -3,6 +3,12 @@ import { chmod, unlink } from "fs/promises";
 import { getLocalPaths } from "./config.ts";
 import { debug } from "../utils/logger.ts";
 
+export interface LinkedMembership {
+  membershipType: number;
+  membershipId: string;
+  displayName: string;
+}
+
 export interface StoredTokens {
   accessToken: string;
   refreshToken: string;
@@ -13,6 +19,8 @@ export interface StoredTokens {
   destinyMembershipId: string;
   destinyMembershipType: number;
   displayName: string;
+  /** Every Destiny membership linked at login. Absent on tokens saved by older builds. */
+  memberships?: LinkedMembership[];
 }
 
 // Simple obfuscation key derived from machine-specific data.

@@ -1,6 +1,6 @@
 import { OAUTH_CALLBACK_PORT, API_BASE } from "../utils/constants.ts";
 import { getConfig, getLocalPaths, ensureDirs } from "./config.ts";
-import { saveTokens, type StoredTokens } from "./token-store.ts";
+import { saveTokens, type LinkedMembership, type StoredTokens } from "./token-store.ts";
 import { exchangeCode } from "../api/auth.ts";
 import { assertOAuthState, buildAuthorizeUrl, createOAuthState, escapeHtml } from "./oauth.ts";
 import { AuthError } from "../utils/errors.ts";
@@ -126,6 +126,13 @@ export async function login(): Promise<StoredTokens> {
             throw new AuthError("No Destiny memberships found on this account");
           }
 
+          const linked: LinkedMembership[] = membershipData.destinyMemberships.map((membership) => ({
+            membershipType: membership.membershipType,
+            membershipId: membership.membershipId,
+            displayName:
+              membership.displayName || membershipData.bungieNetUser.displayName,
+          }));
+
           const tokens: StoredTokens = {
             accessToken: tokenRes.access_token,
             refreshToken: tokenRes.refresh_token,
@@ -138,6 +145,7 @@ export async function login(): Promise<StoredTokens> {
             displayName:
               primary.displayName ||
               membershipData.bungieNetUser.displayName,
+            memberships: linked,
           };
 
           await saveTokens(tokens);

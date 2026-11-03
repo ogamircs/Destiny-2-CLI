@@ -1,5 +1,6 @@
 import { apiRequest } from "./client.ts";
 import { loadTokens } from "../services/token-store.ts";
+import { getGame } from "../games/context.ts";
 import { AuthError } from "../utils/errors.ts";
 import { debug } from "../utils/logger.ts";
 
@@ -30,6 +31,12 @@ export interface ProfileResponse {
   };
   profileInventory?: {
     data: { items: InventoryItemData[] };
+  };
+  d1?: {
+    grimoireScore: number;
+    membershipType: number;
+    membershipId: string;
+    levelByCharacter: Record<string, number>;
   };
   itemComponents?: {
     instances?: {
@@ -95,6 +102,11 @@ function getAuthInfo() {
 export async function getProfile(
   components: number[]
 ): Promise<ProfileResponse> {
+  if (getGame() === "d1") {
+    const { fetchD1Profile } = await import("../services/d1-profile.ts");
+    return fetchD1Profile();
+  }
+
   const { destinyMembershipType, destinyMembershipId } = getAuthInfo();
   const componentStr = components.join(",");
   debug(
