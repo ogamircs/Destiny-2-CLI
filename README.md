@@ -1,6 +1,8 @@
 # Destiny 2 CLI
 
-A macOS command-line tool for Destiny 2. View your characters, browse inventory, transfer items, tag and annotate gear, search with a query language, appraise rolls against wishlists, and check stats — all from the terminal.
+A command-line tool for Destiny 2, with Destiny 1 support on Xbox and PlayStation. View your characters, browse inventory, transfer items, tag and annotate gear, search with a query language, appraise rolls against wishlists, and check stats — all from the terminal.
+
+Destiny 2 is the default. Prefix any command with `--game d1` for Destiny 1. See [Destiny 1](#destiny-1).
 
 ## Requirements
 
@@ -337,7 +339,60 @@ destiny stats --json
 ```bash
 # Enable verbose debug logging for any command
 destiny --verbose <command>
+
+# Query Destiny 1 instead of Destiny 2
+destiny --game d1 characters
+
+# Pick a console when the Bungie account has both Xbox and PlayStation
+destiny --game d1 --platform psn inventory
 ```
+
+`--game`, `--platform`, and `--verbose` can appear before or after the command name. `DESTINY_GAME=d1` in the environment selects Destiny 1 when `--game` is omitted.
+
+## Destiny 1
+
+Destiny 1 uses Bungie's legacy platform API at `https://www.bungie.net/d1/Platform`. The same OAuth login is used for both games. Destiny 1 characters exist only on Xbox and PlayStation memberships. A Steam-only Destiny 2 account has nothing to query. If both consoles are linked, pass `--platform xbox` or `--platform psn`.
+
+`destiny auth login` stores every linked Destiny membership. Tokens saved by older builds are refreshed from `GetMembershipsForCurrentUser` the first time you use `--game d1`.
+
+```bash
+destiny --game d1 characters
+destiny --game d1 inventory --vault
+destiny --game d1 inventory --slot primary
+destiny --game d1 search "is:weapon slot:primary"
+destiny --game d1 transfer "Fatebringer" --to vault
+destiny --game d1 equip "Fatebringer" --character hunter
+destiny --game d1 stats --mode trials
+destiny --game d1 progress
+destiny --game d1 records
+destiny --game d1 vendors
+```
+
+The same commands work for both games when the underlying API allows it:
+
+| Command | Destiny 1 |
+|---|---|
+| `auth` | Same Bungie login. Status lists which linked platforms can see Destiny 1. |
+| `characters` | Class, race, light, play time, and Grimoire score. There is no Guardian Rank. |
+| `inventory`, `search`, `tag`, `note`, `compare`, `organize`, `armory` | Character inventory plus vault, normalized into the same item index. Primary/special/heavy match `slot:kinetic`, `slot:energy`, and `slot:power` as well as their Destiny 1 names. |
+| `transfer`, `equip`, `farming`, `loadout` | `TransferItem` and `EquipItem` on the legacy API, including the vault hop between characters. Tags, notes, loadouts, and farming sessions are stored separately from Destiny 2. |
+| `stats` | Historical stats. Modes: `pvp`, `pve`, `raid`, `strikes`, `trials`, `ironbanner`, `nightfall`, `story`, `patrol`. |
+| `progress` | Character level, light, Grimoire, and faction or subclass progression. |
+| `records` | Grimoire score and record books. Triumphs and seals do not exist in Destiny 1. |
+| `vendors` | Advisor activities. Bungie retired the bulk Destiny 1 vendor inventory endpoint. |
+| `rolls`, `optimizer` | Not available. See below. |
+| `sync`, `integrations` | Local or scaffold commands. They are not game-specific. |
+
+Not available for Destiny 1, and why:
+
+- **`rolls`** grades Destiny 2 socket plugs against DIM wishlist hashes. Destiny 1 random rolls live on talent grids, and the inventory summary does not return a wishlist-compatible perk list. If a response includes selected perk hashes, `armory` and `compare` will show them.
+- **`optimizer`** scores the six Destiny 2 armor stats plus wishlist sockets. Destiny 1 armor uses intellect, discipline, and strength on a different scale.
+- **Gambit and dungeons** are not Destiny 1 activity modes.
+- **Guardian Rank, artifact power, seasonal power cap, and seals** are Destiny 2 profile concepts.
+
+The Destiny 1 manifest is cached separately at `~/.cache/destiny-cli/d1/` so it does not replace the Destiny 2 database. Definition JSON uses Destiny 1 field names (`itemName`, `bucketTypeHash`, and so on).
+
+These paths were checked against Bungie's Destiny 1 platform docs and Destiny Item Manager's client. This repo was not exercised against a live Bungie account.
 
 ## Building a Standalone Binary
 
@@ -354,11 +409,14 @@ bun run scripts/build.ts && sudo mv destiny /usr/local/bin/destiny
 ## Testing
 
 ```bash
-# Run all unit tests
+# Run all unit tests. Each file is isolated so module mocks cannot leak.
 bun test
 
 # Watch mode for local iteration
 bun test --watch
+
+# Typecheck application source
+bun run typecheck
 ```
 
 ## Project Structure
