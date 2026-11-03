@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { spawnSync } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -39,7 +38,7 @@ afterAll(() => {
 describe("updateManifest", () => {
   test("extracts the content database before recording the version", async () => {
     const payload = "manifest-bytes";
-    const bytes = await writeZip(payload, "world_sql_content.content");
+    const bytes = writeZip(payload, "world_sql_content.content");
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
       new Response(bytes, { status: 200 })) as typeof fetch;
@@ -75,19 +74,58 @@ describe("updateManifest", () => {
   });
 });
 
-async function writeZip(contents: string, fileName: string): Promise<Uint8Array> {
-  const sourceDir = mkdtempSync(join(tmpdir(), "destiny-manifest-zip-src-"));
-  try {
-    const zipPath = join(sourceDir, "manifest.zip");
-    const contentPath = join(sourceDir, fileName);
-    await Bun.write(contentPath, contents);
-    const result = spawnSync("zip", ["-j", zipPath, contentPath], { encoding: "utf8" });
-    if (result.status !== 0) {
-      throw new Error(result.stderr || "zip failed");
+function crc32(data: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
     }
-    const bytes = new Uint8Array(await Bun.file(zipPath).arrayBuffer());
-    return bytes;
-  } finally {
-    rmSync(sourceDir, { recursive: true, force: true });
   }
+  return ~crc >>> 0;
+}
+
+function storedZip(fileName: string, contents: string): Uint8Array {
+  const data = new TextEncoder().encode(contents);
+  const name = new TextEncoder().encode(fileName);
+  const crc = crc32(data);
+  const local = new Uint8Array(30 + name.length + data.length);
+  const localView = new DataView(local.buffer);
+  localView.setUint32(0, 0x04034b50, true);
+  localView.setUint16(4, 20, true);
+  localView.setUint32(14, crc, true);
+  localView.setUint32(18, data.length, true);
+  localView.setUint32(22, data.length, true);
+  localView.setUint16(26, name.length, true);
+  local.set(name, 30);
+  local.set(data, 30 + name.length);
+
+  const central = new Uint8Array(46 + name.length);
+  const centralView = new DataView(central.buffer);
+  centralView.setUint32(0, 0x02014b50, true);
+  centralView.setUint16(4, 20, true);
+  centralView.setUint16(6, 20, true);
+  centralView.setUint32(16, crc, true);
+  centralView.setUint32(20, data.length, true);
+  centralView.setUint32(24, data.length, true);
+  centralView.setUint16(28, name.length, true);
+  central.set(name, 46);
+
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(8, 1, true);
+  endView.setUint16(10, 1, true);
+  endView.setUint32(12, central.length, true);
+  endView.setUint32(16, local.length, true);
+
+  const zip = new Uint8Array(local.length + central.length + end.length);
+  zip.set(local, 0);
+  zip.set(central, local.length);
+  zip.set(end, local.length + central.length);
+  return zip;
+}
+
+function writeZip(contents: string, fileName: string): Uint8Array {
+  return storedZip(fileName, contents);
 }
