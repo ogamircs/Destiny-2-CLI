@@ -252,6 +252,21 @@ export function lookupManifestName(table: string, hash: number): string | null {
   }
 }
 
+export function lookupVendorDisplayItemHash(vendorHash: number): number | null {
+  try {
+    const database = getDb();
+    const row = database
+      .query("SELECT json FROM DestinyVendorDefinition WHERE id = ?")
+      .get(toSignedHash(vendorHash)) as ManifestJsonRow | null;
+    if (!row) return null;
+    const data = JSON.parse(row.json) as Record<string, unknown>;
+    const displayItemHash = numberField(data.displayItemHash);
+    return displayItemHash && displayItemHash > 0 ? displayItemHash : null;
+  } catch {
+    return null;
+  }
+}
+
 export function lookupFactionNameForProgression(progressionHash: number): string | null {
   try {
     if (!factionNameByProgression) {

@@ -11,7 +11,12 @@ import { error, header } from "../ui/format.ts";
 import { formatError } from "../utils/errors.ts";
 import { buildVendorsReport } from "../services/progression.ts";
 import { loadD1Advisors } from "../services/d1-views.ts";
-import { ensureManifest, lookupManifestName } from "../services/manifest-cache.ts";
+import { vendorNameFromParts } from "../services/definition-name.ts";
+import {
+  ensureManifest,
+  lookupManifestName,
+  lookupVendorDisplayItemHash,
+} from "../services/manifest-cache.ts";
 import { getGame } from "../games/context.ts";
 
 const VENDOR_COMPONENTS = [
@@ -74,9 +79,15 @@ export function registerVendorsCommand(program: Command) {
           )
         );
 
-        const report = buildVendorsReport(vendorResponses, (vendorHash) =>
-          lookupManifestName("DestinyVendorDefinition", vendorHash)
-        );
+        const report = buildVendorsReport(vendorResponses, (vendorHash) => {
+          const displayItemHash = lookupVendorDisplayItemHash(vendorHash);
+          return vendorNameFromParts(
+            lookupManifestName("DestinyVendorDefinition", vendorHash),
+            displayItemHash
+              ? lookupManifestName("DestinyInventoryItemDefinition", displayItemHash)
+              : null
+          );
+        });
 
         if (opts.json) {
           console.log(JSON.stringify(report, null, 2));
@@ -91,6 +102,7 @@ export function registerVendorsCommand(program: Command) {
           `Categories: ${report.summary.categoryCount} | Sale items: ${report.summary.saleItemCount}`
         );
         for (const vendor of report.vendors) {
+          if (/^Vendor \d+$/.test(vendor.vendorLabel)) continue;
           const refresh = vendor.nextRefreshDate ?? "unknown";
           console.log(
             `${vendor.vendorLabel} | classes: ${vendor.characters.join(", ")} | categories: ${vendor.categoryCount} | items: ${vendor.saleItemCount} | refresh: ${refresh}`

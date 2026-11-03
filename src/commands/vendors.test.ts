@@ -107,9 +107,14 @@ async function setupVendorsCommandTest() {
   }));
   mock.module("../services/manifest-cache.ts", () => ({
     ensureManifest: async () => {},
-    lookupManifestName: (_table: string, hash: number) =>
-      hash === 2190858386 ? "Banshee-44" : null,
+    lookupManifestName: (_table: string, hash: number) => {
+      if (hash === 2190858386) return "Banshee-44";
+      if (hash === 999) return "Ada-1";
+      return null;
+    },
     lookupFactionNameForProgression: () => null,
+    lookupVendorDisplayItemHash: (hash: number) =>
+      hash === 3361454721 ? 999 : null,
   }));
 
   const { registerVendorsCommand } = await import(
@@ -184,5 +189,8 @@ describe("vendors command", () => {
       saleItemCount: 5,
       enabledOn: 2,
     });
+    expect(output.vendors.some((vendor: { vendorLabel: string }) => vendor.vendorLabel === "Ada-1")).toBe(
+      true
+    );
   });
 });

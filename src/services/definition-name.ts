@@ -1,4 +1,4 @@
-const CODE_NAME = /^[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+$/;
+const CODE_NAME = /^[A-Za-z0-9]+(?:[._][A-Za-z0-9]+)+$/;
 const DROPPED_TOKENS = new Set([
   "faction",
   "factions",
@@ -6,6 +6,7 @@ const DROPPED_TOKENS = new Set([
   "events",
   "progression",
   "progressions",
+  "tickets",
 ]);
 
 export function isInternalCodeName(value: string): boolean {
@@ -13,7 +14,7 @@ export function isInternalCodeName(value: string): boolean {
 }
 
 export function humanizeCodeName(value: string): string {
-  const parts = value.split("_").filter((part) => {
+  const parts = value.split(/[._]/).filter((part) => {
     if (!part) return false;
     if (DROPPED_TOKENS.has(part.toLowerCase())) return false;
     if (/^r\d+$/i.test(part) || /^s\d+$/i.test(part)) return false;
@@ -52,6 +53,28 @@ export function definitionDisplayName(data: Record<string, unknown>): string | n
   const code = candidates.find((value) => isInternalCodeName(value));
   if (code) return humanizeCodeName(code);
   return null;
+}
+
+export function vendorNameFromParts(
+  directName: string | null,
+  displayItemName: string | null
+): string | null {
+  const name = directName?.trim() || displayItemName?.trim() || "";
+  return name || null;
+}
+
+export function prettifyProgressionName(value: string): string {
+  const trimmed = value.trim();
+  if (/trials[._]of[._]osiris/i.test(trimmed)) {
+    if (/wins/i.test(trimmed)) return "Trials of Osiris Wins";
+    if (/loss/i.test(trimmed)) return "Trials of Osiris Losses";
+    return "Trials of Osiris";
+  }
+  if (isInternalCodeName(trimmed)) return humanizeCodeName(trimmed);
+  if (/^[a-z][a-z0-9]*$/.test(trimmed)) {
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  }
+  return trimmed;
 }
 
 export function htmlToText(value: string): string {

@@ -11,7 +11,7 @@ import {
   lookupFactionNameForProgression,
   lookupManifestName,
 } from "./manifest-cache.ts";
-import { htmlToText, isInternalCodeName } from "./definition-name.ts";
+import { htmlToText, isInternalCodeName, prettifyProgressionName } from "./definition-name.ts";
 import { resolveActiveMembership } from "./membership.ts";
 
 export interface D1ProgressionRow {
@@ -73,10 +73,13 @@ function progressionRows(raw: unknown): D1ProgressionRow[] {
       hash !== undefined ? lookupManifestName("DestinyProgressionDefinition", hash) : null;
     const factionName =
       hash !== undefined ? lookupFactionNameForProgression(hash) : null;
-    const name =
+    const rawName =
       (factionName && !isInternalCodeName(factionName) ? factionName : null) ??
       definitionName ??
       (hash !== undefined ? `Progression ${hash}` : "Progression");
+    const name = rawName.startsWith("Progression ")
+      ? rawName
+      : prettifyProgressionName(rawName);
     return [{
       name,
       level,
